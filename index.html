@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Splatitude — your space, in sound</title>
+<meta name="description" content="A local music playground for your Gaussian splats. Explore real places through sound.">
+<style>
+  :root{
+    --void:#08090b;
+    --chassis:#101216;
+    --chassis-hi:#161920;
+    --rule:#1e222a;
+    --ink:#cfd4da;
+    --ink-dim:#737b86;
+    --signal:#9fe0d4;
+    --live:#ff5a3c;
+    /* Third accent, for automation affordances only. The reset and key glyphs
+       previously sat on --rule, which is the border colour — near invisible
+       against the chassis by design. Automation state needs to be legible at a
+       glance without competing with --signal (values) or --live (transport). */
+    --edit:#b48ce8;
+    --rail:340px;
+    --dock:64px;
+    /* --lane-extra is JS-driven (updateLaneHeight()) — grows to fit whichever
+       disclosure panels (Audio shaping, Gesture range) are currently open,
+       rather than letting their content overflow the lane's own fixed box
+       into the opaque #transport bar below it. Real bug, found live: with
+       --lane-extra fixed at 0 (i.e. before this existed), the Audio shaping
+       panel's Attack/Release rows measured inside #transport's own screen
+       rect — present in the DOM, receiving no usable clicks, invisible under
+       #transport's opaque background. Confirmed pre-existing, not something
+       any one phase introduced — the lane's height was simply always static
+       while its content was not. */
+    --lane-extra:0px;
+    --lane:calc(88px + var(--lane-extra));
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--void); color:var(--ink);
+    font-family:var(--mono); font-size:11px; line-height:1.45;
+    overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+  canvas{display:block}
+
+  #stage{position:fixed; inset:0 var(--rail) calc(var(--dock) + var(--lane)) 0; background:var(--void)}
+  #rail{
+    position:fixed; top:0; right:0; bottom:0; width:var(--rail);
+    background:var(--chassis); border-left:1px solid var(--rule);
+    overflow-y:auto; overscroll-behavior:contain;
+  }
+  #transport{
+    position:fixed; left:0; right:var(--rail); bottom:0; height:var(--dock);
+    background:var(--chassis); border-top:1px solid var(--rule);
+    display:flex; align-items:center; gap:14px; padding:0 16px;
+  }
+
+  /* Envelope lane ---------------------------------------------------- */
+  #lane{
+    position:fixed; left:0; right:var(--rail); bottom:var(--dock); height:var(--lane);
+    background:var(--chassis); border-top:1px solid var(--rule);
+    display:flex; flex-direction:column;
+  }
+  #laneHead{display:flex; align-items:center; gap:7px; padding:5px 16px 2px}
+  #laneName{
+    color:var(--signal); letter-spacing:.08em; text-transform:uppercase;
+    font-size:10px; white-space:nowrap;
+  }
+  #laneRange{color:var(--rule); font-variant-numeric:tabular-nums; font-size:10px}
+  #laneHead .sp{flex:1}
+  #laneHead button{padding:1px 7px; font-size:10px}
+  #laneHead .lsep{width:1px; height:12px; background:var(--rule)}
+  #laneHead .audlbl{color:var(--ink-dim); letter-spacing:.06em; font-size:10px}
+  #laneHead select{padding:1px 4px; font-size:10px}
+  #audDepth{width:88px}
+  #laneHead output{color:var(--signal); font-variant-numeric:tabular-nums;
+                   font-size:10px; min-width:30px; text-align:right}
+  .meter{display:grid; grid-template-columns:34px 1fr 34px; gap:7px;
+         align-items:center; margin-bottom:5px}
+  .meter label{color:var(--ink-dim)}
+  .meter .bar{height:5px; background:var(--chassis-hi); border:1px solid var(--rule);
+              overflow:hidden}
+  .meter .bar i{display:block; height:100%; width:0%; background:var(--signal);
+                transition:width .05s linear}
+  .meter output{color:var(--signal); font-variant-numeric:tabular-nums; text-align:right}
+  /* Loading progress — DEV_PLAN_UX.md Phase 4. Same track/fill language as
+     .meter above (chassis-hi track, signal fill), reused rather than a
+     second bar style invented for one more element. */
+  #loadBar{height:5px; margin:0 16px 9px; background:var(--chassis-hi);
+           border:1px solid var(--rule); overflow:hidden}
+  #loadBar.hide{display:none}
+  #loadBar i{display:block; height:100%; width:0%; background:var(--signal);
+             transition:width .1s linear}
+  /* Parse phase has no real percentage to show — a 30%-wide segment sweeps
+     the track instead, which reads as "working", not "38% done and lying". */
+  #loadBar.indeterminate i{width:30%!important; animation:loadSweep 1.1s ease-in-out infinite}
+  @keyframes loadSweep{0%{transform:translateX(-100%)} 100%{transform:translateX(333%)}}
+  /* Camera keyframes get their own strip, always visible regardless of
+     which parameter is focused — "never confused with parameter keys" per
+     NOTES. Plain positioned divs, not a canvas: far simpler than extending
+     drawLane()'s per-parameter renderer for a row that has no Y-axis value
+     to plot, only a position on the timeline. */
+  /* Audio shaping — a disclosure, not always-on: eight controls per route
+     is exactly the point where a flat list stops working, per NOTES. Band
+     and depth stay on the always-visible laneHead row since they are the
+     two anyone actually touches; everything else lives here. */
+  #audShapePanel{
+    flex:0 0 auto; border-bottom:1px solid var(--rule); background:var(--chassis);
+    padding:8px 16px;
+  }
+  #audShapePanel.hide{display:none}
+  #audShapeToggle.dirty{color:var(--edit); border-color:var(--edit)}
+  /* Sub-range/invert — same disclosure treatment as audio shaping: the two
+     axis toggles are what anyone touches, the range is refinement. */
+  #gestRangePanel{
+    flex:0 0 auto; border-bottom:1px solid var(--rule); background:var(--chassis);
+    padding:8px 16px;
+  }
+  #gestRangePanel.hide{display:none}
+  #audSpark{width:100%; height:34px; display:block; margin-bottom:6px}
+  #audShapeRows{display:grid; grid-template-columns:1fr 1fr; gap:0 16px}
+  #audShapeRows .row{margin-bottom:5px}
+  #camRow{
+    position:relative; height:16px; flex:0 0 auto;
+    border-bottom:1px solid var(--rule); background:var(--chassis);
+  }
+  #camRowHint{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--rule); font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+    pointer-events:none;
+  }
+  #camRowHint.hide{display:none}
+  .camtick{
+    position:absolute; top:3px; width:10px; height:10px; margin-left:-5px;
+    background:var(--edit); cursor:ew-resize; transform:rotate(45deg);
+    border:1px solid var(--chassis); touch-action:none;
+  }
+  .camtick.onkey{background:var(--live)}
+  #laneWrap{position:relative; flex:1; min-height:0}
+  #laneCanvas{width:100%; height:100%; cursor:crosshair; touch-action:none}
+  #laneHint{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--rule); pointer-events:none; letter-spacing:.1em; text-transform:uppercase;
+  }
+  #laneHint.hide{display:none}
+
+  /* Per-parameter keyframe button. Ghost keeps the grid aligned on rows
+     whose parameter is deliberately not animatable. */
+  .key{
+    appearance:none; background:none; border:0; padding:0; margin:0;
+    width:16px; height:16px; line-height:16px; text-align:center;
+    font:inherit; font-size:11px; cursor:pointer;
+    color:var(--ink-dim); opacity:.55; transition:color .12s, opacity .12s;
+  }
+  .key:hover{color:var(--signal); opacity:1}
+  /* Automation state, in increasing order of "something is driving this". */
+  .key.armed{color:var(--edit); opacity:1}
+  .key.aud{color:var(--signal); opacity:1}
+  .key.onkey{color:var(--live); opacity:1}
+  .key.aud.onkey{color:var(--live)}
+  .key.focused{text-shadow:0 0 7px currentColor; opacity:1}
+  .key:focus-visible{outline:1px solid var(--signal); outline-offset:1px}
+  .key.ghost{visibility:hidden; cursor:default}
+
+  /* Gesture mode — direct manipulation ---------------------------------
+     Assignment lives in the lane header (#gestX/#gestY/#gestRangeToggle,
+     contextual to the focused parameter — see laneHead()), not a
+     SPEC-enumerating chip strip. See DEV_PLAN_GESTURE.md / NOTES "Gesture
+     mode": at 55-60 SPEC parameters the old strip had become the problem
+     it existed to solve, and it also silently exposed chips for whichever
+     region slot's parameters were NOT the currently-visible tab. */
+  #modeButtons{
+    position:fixed; z-index:20; left:12px; display:flex; gap:8px;
+    bottom:calc(var(--dock) + var(--lane) + 10px);
+  }
+  /* Key hint inside a mode button — desktop only, see the (pointer: coarse)
+     block below. `.lbl` carries the label text alone so setGesture()/
+     setPickMode() can swap "Adjust"/"Orbit" or "Focus"/"Picking…" without
+     touching (and so without re-rendering) the hint span beside it. */
+  .kbd{color:var(--ink-dim); font-variant-numeric:tabular-nums}
+  button.on .kbd{color:inherit}
+  /* Viewport readout — pinned, visible whenever Adjust is on, showing the
+     bound parameter(s) and live value so you can see what you're dragging
+     without opening the sheet. pointer-events:none on the container so it
+     never eats an orbit/adjust drag; the chips themselves opt back in, the
+     only hit targets, so a tap can unbind without needing a separate
+     "unbind" affordance. */
+  #gestureHud{
+    position:fixed; z-index:21; left:12px; pointer-events:none;
+    bottom:calc(var(--dock) + var(--lane) + 10px + 34px);
+    display:flex; flex-direction:column; gap:4px; align-items:flex-start;
+  }
+  #gestureHud.hide{display:none}
+  .gchip{
+    pointer-events:auto; cursor:pointer;
+    color:var(--signal); font-variant-numeric:tabular-nums; letter-spacing:.02em;
+    background:var(--chassis); border:1px solid var(--edit); padding:6px 10px;
+  }
+  .gchip:hover{border-color:var(--signal)}
+  /* Row axis-letter indicator — passive text inside the existing label
+     cell, not a new grid column or a per-row button (the row grid already
+     carries label/output/reset/key/slider for ~57 rows; a control most
+     rows would never use does not belong there). At most 2 rows ever show
+     one at a time. */
+  .gaxis{color:var(--edit); font-weight:600; margin-left:5px}
+  /* While dragging, the viewport must not pan/zoom the page under the finger. */
+  body.gesture #stage, body.gesture #stage canvas{touch-action:none}
+  body.gesture #stage{outline:1px solid var(--edit); outline-offset:-2px}
+
+  #osd{
+    position:fixed; left:16px; top:14px; pointer-events:none;
+    color:var(--signal); font-size:10px; letter-spacing:.09em;
+    text-transform:uppercase; opacity:.82;
+  }
+  #osd b{font-weight:400; color:var(--ink-dim); display:inline-block; width:74px}
+  #osd span{font-variant-numeric:tabular-nums}
+
+  #drop{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:14px; text-align:center; padding:24px;
+  }
+  #drop.hide{display:none}
+  #drop h1{
+    font-size:13px; font-weight:400; letter-spacing:.34em; text-transform:uppercase;
+    margin:0; color:var(--ink);
+  }
+  #drop p{margin:0; color:var(--ink-dim); max-width:44ch; letter-spacing:.02em}
+  body.dragging #stage{outline:1px solid var(--signal); outline-offset:-9px}
+
+  /* Native <details> rather than a custom widget: keyboard accessible for
+     free, works inside the mobile bottom sheet, and there is no open/closed
+     state machine to own beyond persisting it. */
+  .mod{border-bottom:1px solid var(--rule); padding:0 16px}
+  .mod[open]{padding-bottom:16px}
+  /* Section titles sit on --signal rather than --ink-dim. They were 4.1:1
+     against --chassis, under AA for 10px uppercase at .24em tracking, and
+     genuinely hard to scan; --signal measures ~13:1. This does not overload
+     the accent's "values" meaning from the colour table — a section title is
+     structural navigation in a fixed position and never appears in the same
+     role as an inline readout, so the two cannot be confused. The `em`
+     descriptor stays dim so the title itself still carries the emphasis. */
+  .mod > summary{
+    margin:0 -16px; padding:13px 16px; cursor:pointer; list-style:none;
+    font-size:10px; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--signal); display:flex; align-items:baseline; gap:9px;
+  }
+  .mod > summary::-webkit-details-marker{display:none}
+  .mod > summary::before{content:"+"; color:var(--rule); width:8px}
+  .mod[open] > summary::before{content:"\2212"}
+  .mod > summary:hover{color:var(--ink)}
+  .mod > summary:focus-visible{outline:1px solid var(--signal); outline-offset:-2px}
+  .mod > summary em{font-style:normal; color:var(--rule); flex:1; text-align:right}
+  /* Divider inside a group that merges two related effects under one title
+     (Depth = fade + field). Deliberately NOT a <summary> — a second summary
+     inside one <details> is invalid and only the first is the disclosure
+     control, so these are plain headings that read like one. */
+  .subhead{
+    display:flex; align-items:baseline; gap:9px;
+    font-size:10px; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--ink-dim); border-top:1px solid var(--rule);
+    margin:14px -16px 9px; padding:12px 16px 0;
+  }
+  .mod[open] > .subhead:first-of-type{border-top:none; margin-top:2px; padding-top:0}
+  .subhead em{font-style:normal; color:var(--rule); flex:1; text-align:right}
+  /* A collapsed group must never hide that something inside it is driven. */
+  .gflag{
+    font-style:normal; min-width:11px; text-align:center; letter-spacing:0;
+    color:transparent; font-size:10px;
+  }
+  .gflag.on{color:var(--edit)}
+
+  .row{display:grid; grid-template-columns:1fr auto auto 54px; gap:8px; align-items:center; margin-bottom:7px}
+  /* Rows visible only under ?debug=1 — .debug is toggled on <html> at boot,
+     before first paint, so there is no flash of the hidden control. */
+  .debug-only{display:none}
+  .debug .debug-only{display:grid}
+  .row label.focusable{cursor:pointer}
+  .row label.focusable:hover{color:var(--ink)}
+  .row label{color:var(--ink-dim); letter-spacing:.05em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .row output{color:var(--signal); text-align:right; font-variant-numeric:tabular-nums; letter-spacing:.02em}
+  .row input[type=range]{grid-column:1 / -1; width:100%}
+  /* Per-parameter reset. Dim until the value differs from its HTML default,
+     so the panel doubles as an at-a-glance "what have I changed" readout. */
+  .rst{
+    appearance:none; background:none; border:0; padding:0; margin:0;
+    width:16px; height:16px; line-height:16px; text-align:center;
+    font:inherit; font-size:13px; cursor:pointer;
+    color:var(--ink-dim); opacity:.55; transition:color .12s, opacity .12s;
+  }
+  .rst:hover{color:var(--signal); opacity:1; border-color:transparent}
+  .rst:focus-visible{outline:1px solid var(--signal); outline-offset:1px}
+  .rst.dirty{color:var(--edit); opacity:1}
+  .rst.dirty:hover{color:var(--signal)}
+  #camDirty{color:var(--edit); display:none; margin-left:4px}
+  #camDirty.show{display:inline}
+
+  input[type=range]{-webkit-appearance:none; appearance:none; background:transparent; height:14px; margin:0 0 3px}
+  input[type=range]::-webkit-slider-runnable-track{height:1px; background:var(--rule)}
+  input[type=range]::-moz-range-track{height:1px; background:var(--rule)}
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:2px; height:11px; margin-top:-5px;
+    background:var(--signal); border:0; border-radius:0;
+  }
+  input[type=range]::-moz-range-thumb{width:2px; height:11px; background:var(--signal); border:0; border-radius:0}
+  input[type=range]:focus-visible{outline:1px solid var(--signal); outline-offset:2px}
+  /* Model transform fields: locked outside Correct mode, per NOTES — the
+     transform is not live-editable from the rail, only from inside the mode. */
+  input[type=range]:disabled{opacity:.32; cursor:default}
+  input[type=range]:disabled::-webkit-slider-thumb{cursor:default}
+
+  button, select{
+    font:inherit; color:var(--ink); background:var(--chassis-hi);
+    border:1px solid var(--rule); border-radius:2px; padding:5px 9px;
+    letter-spacing:.1em; text-transform:uppercase; cursor:pointer;
+  }
+  button:hover{border-color:var(--ink-dim)}
+  button:focus-visible, select:focus-visible{outline:1px solid var(--signal); outline-offset:1px}
+  button[disabled]{opacity:.35; cursor:default}
+  input[type=number]{
+    font:inherit; color:var(--signal); background:var(--chassis-hi);
+    border:1px solid var(--rule); border-radius:2px; padding:5px 6px;
+    text-align:center; font-variant-numeric:tabular-nums;
+  }
+  input[type=number]:disabled{opacity:.35}
+  input[type=number]:focus-visible{outline:1px solid var(--signal); outline-offset:1px}
+  /* .audlbl is defined under #laneHead for the lane's own controls; the Audio
+     rail section reuses the same small dim caption treatment. */
+  .mod .audlbl{color:var(--ink-dim); letter-spacing:.06em; font-size:10px; align-self:center}
+  /* Correct mode outline on the viewport, echoing the gesture-mode outline so
+     the two modal states read as visually related but distinguishable
+     (--edit violet vs --edit-adjacent). */
+  body.correcting #stage{outline:1px solid var(--edit); outline-offset:-2px}
+  /* Bottom-RIGHT, not bottom-left: the Adjust button lives at
+     left:12px, bottom: dock+lane+10px, and the two overlapped there (caught
+     in a screenshot, not by any measurement — genuinely worth eyeballing a
+     modal's on-screen text at least once). Gesture mode is force-disabled
+     while correcting, so the palette that would otherwise occupy this strip
+     is guaranteed hidden. */
+  body.correcting #stage::after{
+    content:"CORRECT — drag the gizmo or use the sliders";
+    position:absolute; right:14px; bottom:12px; pointer-events:none;
+    color:var(--edit); font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+  }
+  button.on{color:var(--signal); border-color:var(--signal)}
+  button.live{color:var(--live); border-color:var(--live)}
+  .btns{display:flex; gap:6px; flex-wrap:wrap}
+  .check{display:flex; align-items:center; gap:7px; color:var(--ink-dim); cursor:pointer; margin-bottom:7px}
+  .check input{accent-color:var(--signal); margin:0}
+
+  #scrub{flex:1}
+  #clock{color:var(--signal); font-variant-numeric:tabular-nums; letter-spacing:.05em; min-width:120px}
+  #status{padding:9px 16px; color:var(--ink-dim); letter-spacing:.03em; border-bottom:1px solid var(--rule); min-height:34px}
+  #status.warn{color:var(--live)}
+  a{color:var(--signal)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+  /* Clean view — `H`, desktop keyboard nav (DEV_PLAN_UX.md Phase 3). Hides
+     every overlay chrome element and lets #stage reclaim the space they
+     occupied; setHudHidden() calls resize() in the same tick so the
+     renderer's own buffer catches up with the now-larger CSS box instead of
+     sitting stretched inside it. */
+  body.hud-hidden #rail, body.hud-hidden #transport, body.hud-hidden #lane,
+  body.hud-hidden #osd, body.hud-hidden #modeButtons, body.hud-hidden #gestureHud,
+  body.hud-hidden #panelToggle{ display:none }
+  body.hud-hidden #stage{ inset:0 }
+
+  /* Bindings overlay — `?`. Listed once, dismissed on Esc or a click
+     anywhere on the backdrop; no settings panel, per the plan's own
+     instruction that a static list is enough. */
+  #kbdOverlay{
+    position:fixed; inset:0; z-index:40; background:rgba(8,9,11,.82);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  #kbdOverlay.hide{display:none}
+  #kbdPanel{
+    background:var(--chassis); border:1px solid var(--rule); padding:22px 26px;
+    max-width:420px; cursor:default; color:var(--ink);
+  }
+  #kbdPanel h2{margin:0 0 14px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--signal)}
+  #kbdPanel table{border-collapse:collapse; width:100%}
+  #kbdPanel td{padding:3px 0; font-size:12px; letter-spacing:.02em}
+  #kbdPanel td:first-child{color:var(--signal); font-variant-numeric:tabular-nums; white-space:nowrap; padding-right:16px}
+  #kbdPanel td:last-child{color:var(--ink-dim)}
+  #kbdPanel p{margin:14px 0 0; color:var(--ink-dim); font-size:11px}
+
+  /* Mobile ------------------------------------------------------------
+     Desktop is the target and none of the rules above are conditional on
+     screen size, so this block can only ever subtract. The rail becomes a
+     bottom sheet instead of a permanent 340px column, which is the whole
+     width of a phone. Everything stays reachable — nothing is removed. */
+  #panelToggle{
+    display:none;
+    position:fixed; right:12px; top:12px; z-index:20;
+  }
+  @media (max-width: 900px), (pointer: coarse) {
+    :root{ --rail:0px; --dock:56px; --lane:calc(96px + var(--lane-extra)); }
+    #panelToggle{ display:block }
+    /* A phone has no keyboard and should not advertise one. */
+    .kbd{ display:none }
+    #rail{
+      top:auto; left:0; right:0; width:100%;
+      height:min(64vh, 560px);
+      bottom:calc(var(--dock) + var(--lane));
+      border-left:0; border-top:1px solid var(--rule);
+      transform:translateY(calc(100% + var(--dock) + var(--lane)));
+      transition:transform .22s ease;
+      z-index:15;
+    }
+    body.panel-open #rail{ transform:translateY(0) }
+    /* The lane header carries a lot of controls; let it scroll rather than
+       overflow or reflow the whole strip. */
+    #laneHead{ overflow-x:auto; scrollbar-width:none }
+    #laneHead::-webkit-scrollbar{ display:none }
+    #osd{ font-size:9px; left:10px; top:10px }
+    #osd b{ width:62px }
+    #transport{ gap:9px; padding:0 10px }
+    #clock{ min-width:96px; font-size:10px }
+    /* Touch targets: a 13px glyph is not tappable. */
+    .rst, .key{ width:26px; height:26px; line-height:26px; font-size:15px; opacity:.75 }
+    .row{ grid-template-columns:1fr auto auto 54px; margin-bottom:11px }
+    .row input[type=range]{ height:22px }
+    button, select{ padding:5px 9px }
+    .chip{ padding:8px 12px }
+    #palette{ bottom:calc(var(--dock) + var(--lane) + 44px) }
+    /* Reading and hitting ticks on a 390px-wide strip is not viable — drop
+       the row, keep Add key / Remove key working from the Shot section. */
+    #camRow{ display:none }
+    /* Sparkline is the one thing genuinely not viable on a 390px strip;
+       shaping sliders stay — fiddly on touch, per the plan, but usable. */
+    #audSpark{ display:none }
+    #audShapeRows{ grid-template-columns:1fr }
+  }
+
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/build/three.module.js",
+    "three/addons/": "/vendor/three/examples/jsm/",
+    "@sparkjsdev/spark": "/vendor/spark/dist/spark.module.js",
+    "mp4-muxer": "/vendor/mp4-muxer/build/mp4-muxer.mjs"
+  }
+}
+</script>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/src/splatitude.css">
+</head>
+<body>
+<header id="appHeader">
+  <a class="brand" href="/" aria-label="Splatitude home"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M5 18h4m4-8v16m5-22v28m5-23v18m5-13v8m4-4h1"/></svg><span>splatitude<span class="brandDot">.</span></span></a>
+  <button id="mobileLibrary" class="mobileLibraryButton" style="display:none" aria-expanded="false">Spaces ▾</button>
+  <div class="headerContext">A little space. A lot of sound.</div>
+  <div class="headerActions"><span class="localBadge"><i></i> ALL LOCAL</span><button id="advancedToggle" aria-pressed="false">Advanced editor <span>↗</span></button></div>
+</header>
+<aside id="libraryPanel" aria-label="Splat library">
+  <div class="sectionEyebrow">THE COLLECTION <span id="libraryCount">—</span></div>
+  <div class="sectionHeading"><h2>Your spaces</h2><button id="refreshLibrary" class="iconButton" aria-label="Refresh completed splats" title="Find newly completed exports">↻</button></div>
+  <p class="muted intro">Real places. New frequencies.</p>
+  <div id="libraryList" aria-live="polite"><p class="muted">Finding completed splats…</p></div>
+  <button id="importSplat" class="subtleButton">＋ Open a splat file</button>
+  <p id="libraryHelp" class="finePrint">Finished SHARE scans appear here automatically. Refresh after a new export finishes.</p>
+  <div class="libraryFooter"><span class="tinyMark">S</span><div>Made for wandering.<br><span class="muted">Drag to orbit · scroll to explore</span></div></div>
+</aside>
+<div id="sceneCaption"><span class="eyebrow" id="sceneCategory">YOUR CURRENT SPACE</span><h1 id="sceneTitle">Pick a place to begin</h1><p id="sceneInfo">Your scan stays on this computer.</p></div>
+<div id="sceneTools"><button id="homeView" title="Restore this splat's saved view">⌂ <span>Home view</span></button><button id="saveView" title="Remember the current camera for this splat">Save view</button><button id="present" title="Hide controls for a performance (H)">↗ <span>Perform</span></button></div>
+<button id="exitPerformance">← Back to controls</button>
+<aside id="performancePanel" aria-label="Music and effects">
+  <div class="performanceScroll">
+  <section class="performanceSection">
+    <div class="sectionEyebrow">01 / THE SOUND <span id="sourceBadge">READY</span></div>
+    <h2>Give it a pulse.</h2>
+    <p class="muted">Turn whatever’s playing into a place you can feel.</p>
+    <button id="connectAudio" class="primaryButton"><span class="buttonIcon">≋</span><span>Use system audio</span><span>↗</span></button>
+    <button id="openTrack" class="subtleButton">Or open an audio track <span>＋</span></button>
+    <p id="audioGuide" class="finePrint">Choose <strong>Entire screen</strong>, enable <strong>Share system audio</strong>, then Share.</p>
+    <div class="frequencyDisplay"><canvas id="frequencyCanvas" width="560" height="140" aria-label="Live audio frequency spectrum"></canvas><div><span>BASS</span><span>MID</span><span>TREBLE</span></div></div>
+    <div class="masterRow"><label for="liveSensitivity">Sensitivity</label><output id="sensitivityValue">2.0×</output></div>
+    <input id="liveSensitivity" class="wideSlider" type="range" min="0.25" max="8" step="0.05" value="2" aria-label="Audio sensitivity">
+    <p id="sourceName" class="sourceName" aria-live="polite">Waiting for sound</p>
+  </section>
+  <section class="performanceSection">
+    <div class="sectionEyebrow">02 / THE LOOK <span>LIVE SWITCHING</span></div>
+    <div class="sectionHeading"><h2>Find your frequency.</h2></div>
+    <div id="lookGrid" class="lookGrid" aria-label="Visual looks"></div>
+    <p id="lookNote" class="finePrint">Bass you can feel</p>
+  </section>
+  </div>
+  <section class="performanceSection feelSection">
+    <div class="sectionEyebrow">03 / THE FEEL <button id="bypassEffects" aria-pressed="false" title="Compare with the original scan">A/B original</button></div>
+    <div class="masterRow intensityLabel"><label for="masterIntensity">Intensity</label><output id="intensityValue">100<span>%</span></output></div>
+    <input id="masterIntensity" class="wideSlider" type="range" min="0" max="2" step="0.01" value="1" aria-label="Effect intensity">
+    <div class="rangeLabels"><span>SUBTLE</span><span>ALL IN</span></div>
+    <div class="feelButtons" aria-label="Audio response"><button data-feel="tight">Tight</button><button data-feel="balanced" class="selected">Balanced</button><button data-feel="float">Float</button></div>
+    <div class="sessionButtons"><button id="saveSession">Save preset ↓</button><button id="openSession">Open preset ↑</button></div>
+  </section>
+</aside>
+<footer id="performanceFooter">
+  <div class="footerState"><i id="audioDot"></i><span id="footerState">Choose a space. Bring the music.</span></div>
+  <button id="trackPlay" disabled aria-label="Play audio track">▶ <span>Play track</span></button>
+  <div class="footerStats"><span id="performanceSplats">—</span><span id="performanceFps">—</span><button id="fullScreen" aria-label="Toggle fullscreen">⛶</button></div>
+</footer>
+<div id="toast" role="status" aria-live="polite"></div>
+
+
+<div id="stage">
+  <div id="osd">
+    <div><b>splats</b><span id="t-splats">—</span></div>
+    <div><b>fps</b><span id="t-fps">—</span></div>
+    <div><b>t</b><span id="t-time">—</span></div>
+    <div><b>state</b><span id="t-state">—</span></div>
+    <div><b>dpr</b><span id="t-dpr">—</span></div>
+  </div>
+
+  <!-- Mobile only: the rail is a bottom sheet there, this opens it. -->
+  <button id="panelToggle" aria-expanded="false">Controls</button>
+
+  <!-- Direct manipulation. Bind parameters to the drag axes (via the lane
+       header's Gesture X/Y toggles, once a parameter is focused) and adjust
+       them on the viewport itself, so the splat stays visible while you
+       work — the whole point on a phone, where the rail covers the subject.
+       See DEV_PLAN_GESTURE.md / NOTES "Gesture mode" — this used to be a
+       SPEC-enumerating chip strip here; it is gone, replaced by the lane
+       header (assignment) and #gestureHud below (live readout). -->
+  <div id="modeButtons">
+    <button id="systemAudioQuick">Use system audio</button>
+    <button id="gestureToggle" aria-pressed="false" title="Adjust parameters by dragging on the viewport. Hold A to engage momentarily — release to return to whatever mode was active."><span class="lbl">Adjust</span><span class="kbd"> (A)</span></button>
+    <button id="focusToggle" aria-pressed="false" title="Tap the model to focus on what you tapped. Hold F to engage momentarily — release to return to whatever mode was active."><span class="lbl">Focus</span><span class="kbd"> (F)</span></button>
+  </div>
+  <div id="gestureHud" class="hide" aria-hidden="true" title="Tap a chip to unbind that axis"></div>
+  <div id="drop">
+    <h1>Your next world is waiting.</h1>
+    <p>Drop a <strong>.ply</strong> / .spz / .splat / .sog file here — or tap <em>Choose file</em> —
+       or load the test asset to check the pipeline.</p>
+    <div class="btns" style="justify-content:center">
+      <button id="pick">Choose file</button>
+      <button id="studio">Load martial arts studio</button>
+      <button id="studioView">Studio interior view</button>
+      <button id="demo">Load test asset</button>
+    </div>
+  </div>
+</div>
+
+<div id="lane">
+  <div id="laneHead">
+    <span id="laneName">no parameter focused</span>
+    <span id="laneRange"></span>
+    <span class="sp"></span>
+    <button id="envOn" title="Arm or disarm this envelope">Off</button>
+    <button id="envMode" title="Interpolation between keys">Smooth</button>
+    <button id="envClear" title="Delete every key on this parameter">Clear</button>
+    <span class="lsep"></span>
+    <label class="audlbl">Audio</label>
+    <select id="audBand" title="Frequency band driving the focused parameter">
+      <option value="">off</option>
+      <option value="low">low</option>
+      <option value="mid">mid</option>
+      <option value="high">high</option>
+    </select>
+    <input type="range" id="audDepth" min="-1" max="1" step="0.01" value="0"
+           title="Modulation depth, as a fraction of the parameter's full range">
+    <output id="o-audDepth">0.00</output>
+    <button id="audShapeToggle" title="Attack/release/lag/gain/floor/curve shaping" disabled>Shape ▾</button>
+    <span class="lsep"></span>
+    <label class="audlbl">Mask</label>
+    <select id="maskSrc" title="Scope this parameter to one mask slot">
+      <option value="0">none</option>
+      <option value="1">M1</option>
+      <option value="2">M2</option>
+      <option value="3">M3</option>
+      <option value="4">M4</option>
+      <option value="5">M5</option>
+      <option value="6">M6</option>
+    </select>
+    <label class="check"><input type="checkbox" id="maskInv" title="Invert the mask for this parameter only"> Inv</label>
+    <span class="lsep"></span>
+    <label class="audlbl">Gesture</label>
+    <button id="gestX" type="button" disabled title="Bind this parameter to the X drag axis (Adjust mode)">X</button>
+    <button id="gestY" type="button" disabled title="Bind this parameter to the Y drag axis (Adjust mode)">Y</button>
+    <button id="gestRangeToggle" type="button" disabled title="Sub-range and invert for whichever axis this parameter holds">Range ▾</button>
+  </div>
+  <div id="gestRangePanel" class="hide">
+    <div class="row"><label>Low</label><output id="o-gestLo">—</output>
+      <input type="range" id="gestLo" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>High</label><output id="o-gestHi">—</output>
+      <input type="range" id="gestHi" min="0" max="1" step="0.01" value="1"></div>
+    <label class="check"><input type="checkbox" id="gestInvert"> Invert</label>
+  </div>
+  <div id="audShapePanel" class="hide">
+    <canvas id="audSpark"></canvas>
+    <div id="audShapeRows">
+      <div class="row"><label>Attack</label><output id="o-audAttack">—</output>
+        <input type="range" id="audAttack" min="0" max="500" step="1" value="0"></div>
+      <div class="row"><label>Release</label><output id="o-audRelease">—</output>
+        <input type="range" id="audRelease" min="0" max="2000" step="1" value="120"></div>
+      <div class="row"><label>Lag</label><output id="o-audLag">—</output>
+        <input type="range" id="audLag" min="-500" max="500" step="1" value="0"></div>
+      <div class="row"><label>Gain</label><output id="o-audGain">—</output>
+        <input type="range" id="audGain" min="0" max="4" step="0.01" value="1"></div>
+      <div class="row"><label>Floor</label><output id="o-audFloor">—</output>
+        <input type="range" id="audFloor" min="0" max="1" step="0.005" value="0"></div>
+      <div class="row"><label>Curve</label><output id="o-audCurve">—</output>
+        <input type="range" id="audCurve" min="0.25" max="4" step="0.01" value="1"></div>
+    </div>
+  </div>
+  <div id="camRow" title="Camera keyframes — click a tick to jump there, alt-click to delete">
+    <div id="camRowHint">no camera keyframes</div>
+  </div>
+  <div id="laneWrap">
+    <canvas id="laneCanvas"></canvas>
+    <div id="laneHint">click a parameter name to focus it</div>
+  </div>
+</div>
+
+<div id="transport">
+  <button id="play">Play</button>
+  <input type="range" id="scrub" min="0" max="1" step="0.0005" value="0">
+  <div id="clock">—</div>
+  <button id="render">Render</button>
+</div>
+
+<aside id="rail">
+  <!-- Every <output> starts as an em dash. If the panel still shows dashes
+       after boot, the module died during evaluation — check the console. -->
+  <div id="status">Booting…</div>
+  <!-- Determinate during the read phase (real bytes), indeterminate sweep
+       during parse (Spark exposes no decode-progress event) — see
+       loadBarShow()/startParsePhase(). Hidden outside a load. -->
+  <div id="loadBar" class="hide"><i></i></div>
+
+  <details class="mod" data-group="camera" open>
+    <summary>Camera <em>move + duration</em><i class="gflag"></i></summary>
+    <div class="btns" style="margin-bottom:9px" id="camModeBtns">
+      <button type="button" data-mode="manual" title="Mouse/touch orbit only, nothing drives the camera">Manual</button>
+      <button type="button" data-mode="keyframes" class="on" title="Camera follows the keyframe path below">Keyframes</button>
+      <button type="button" data-mode="orbit" title="Camera follows a generated turntable move">Orbit</button>
+    </div>
+    <div class="btns" style="margin-bottom:9px">
+      <button type="button" id="pickPivotToggle" aria-pressed="false" title="Tap the model to orbit around what you tapped, instead of the object's own centre. Works in Manual, Keyframes and Orbit — mouse-drag orbiting and Orbit mode both turn around whatever the pivot currently is.">Pick pivot</button>
+      <button type="button" id="pickPivotReset" title="Put the pivot back on the object's own centre, without touching camera position or framing.">Reset pivot</button>
+    </div>
+    <p style="color:var(--ink-dim); margin:0 0 9px">
+      The pivot is what Orbit turns around and what a mouse-drag orbit is centred
+      on — misaligned pivot is usually why the model and camera feel like they're
+      fighting each other. Picking one does not move the camera; it only changes
+      what future orbiting turns around.
+    </p>
+    <div class="row"><label>Ease</label><output id="o-ease">—</output>
+      <input type="range" id="p-ease" min="0" max="1" step="0.01" value="0.8"></div>
+    <!-- step="any", not 0.5: Audio's "× set" writes an exact multiple of the
+         track length here, and a snapping step would land the timeline a few
+         ms off the loop point every time. max widened from 30 to 120 for the
+         same reason — looping a 30s track even twice needs more than 30. -->
+    <div class="row"><label>Duration (s)</label><output id="o-dur">—</output>
+      <input type="range" id="p-dur" min="1" max="120" step="any" value="8"></div>
+
+    <div class="btns" style="margin:9px 0" id="camKeyBtns">
+      <button id="camAddKey" title="Add a camera keyframe at the current playhead">Add key</button>
+      <button id="camRemoveKey" title="Remove the camera keyframe at the current playhead">Remove key</button>
+      <button id="camSmooth" title="Path shape between keyframes" class="on">Smooth</button>
+    </div>
+    <p style="color:var(--ink-dim); margin:8px 0" id="camKeyCount">
+      <span id="camKeyCountText">No camera keyframes — camera stays under manual orbit control.</span>
+      <span id="camDirty" title="Orbit has moved the camera away from what the curve shows here — Add key to keep it, or scrub to discard it">· off curve</span>
+    </p>
+
+    <div id="camOrbitRows">
+      <div class="btns" style="margin:9px 0">
+        <select id="obAxis" title="Axis the camera revolves about">
+          <option value="Y" selected>Y axis</option>
+          <option value="X">X axis</option>
+          <option value="Z">Z axis</option>
+        </select>
+      </div>
+      <div class="row"><label>Turns</label><output id="o-obTurns">—</output>
+        <input type="range" id="p-obTurns" min="-3" max="3" step="0.01" value="1"></div>
+      <div class="row"><label>Phase</label><output id="o-obPhase">—</output>
+        <input type="range" id="p-obPhase" min="0" max="1" step="0.002" value="0"></div>
+      <div class="row"><label>Elevation</label><output id="o-obElev">—</output>
+        <input type="range" id="p-obElev" min="-1" max="1" step="0.005" value="0"></div>
+      <div class="row"><label>Distance</label><output id="o-obDist">—</output>
+        <input type="range" id="p-obDist" min="0.3" max="8" step="0.01" value="2.6"></div>
+      <p style="color:var(--ink-dim); margin:8px 0 0">
+        Turns is signed — negative reverses direction. Distance is in multiples of
+        scene radius and re-centres on the current framing whenever the view is
+        reframed. Orbit always centres on the current orbit target, not a stored
+        keyframe.
+      </p>
+    </div>
+  </details>
+
+  <details class="mod" data-group="model">
+    <summary>Transform <em>correct</em><i class="gflag" id="modelFlag"></i></summary>
+    <div class="btns" style="margin-bottom:9px">
+      <button id="correctToggle" aria-pressed="false">Correct</button>
+      <button id="xformCommit" disabled>Commit</button>
+      <button id="xformCancel" disabled>Cancel</button>
+      <button id="xformReset">Reset transform</button>
+    </div>
+    <div class="btns" style="margin-bottom:9px">
+      <button id="gizMove" class="on" disabled>Move</button>
+      <button id="gizRotate" disabled>Rotate</button>
+      <button id="gizScale" disabled>Scale</button>
+    </div>
+    <div class="row"><label>Rotate X</label><i class="key ghost"></i><i class="key ghost"></i><output id="o-mdRotX">—</output>
+      <input type="range" id="p-mdRotX" min="-180" max="180" step="0.5" value="180" disabled></div>
+    <div class="row"><label>Rotate Y</label><i class="key ghost"></i><i class="key ghost"></i><output id="o-mdRotY">—</output>
+      <input type="range" id="p-mdRotY" min="-180" max="180" step="0.5" value="0" disabled></div>
+    <div class="row"><label>Rotate Z</label><i class="key ghost"></i><i class="key ghost"></i><output id="o-mdRotZ">—</output>
+      <input type="range" id="p-mdRotZ" min="-180" max="180" step="0.5" value="0" disabled></div>
+    <div class="row"><label>Position X</label><i class="key ghost"></i><i class="key ghost"></i><output id="o-mdPosX">—</output>
+      <input type="range" id="p-mdPosX" min="-2" max="2" step="0.01" value="0" disabled></div>
+    <div class="row"><label>Position Y</label><i class="key ghost"></i><i class="key ghost"></i><output id="o-mdPosY">—</output>
+      <input type="range" id="p-mdPosY" min="-2" max="2" step="0.01" value="0" disabled></div>
+    <div class="row"><label>Position Z</label><i class="key ghost"></i><i class="key ghost"></i><output id="o-mdPosZ">—</output>
+      <input type="range" id="p-mdPosZ" min="-2" max="2" step="0.01" value="0" disabled></div>
+    <div class="row"><label>Scale</label><i class="key ghost"></i><i class="key ghost"></i><output id="o-mdScale">—</output>
+      <input type="range" id="p-mdScale" min="0" max="1" step="0.002" value="0.5" disabled></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      Euler order XYZ. Position is in multiples of scene radius, scale is log-mapped.
+      Locked outside <strong>Correct</strong> — this cannot be animated, keyframed, or
+      routed to audio, and it is not the same thing as a per-region transform. Rotate X
+      180° is the default Y-down correction most captures need.
+    </p>
+  </details>
+
+  <details class="mod" data-group="trim">
+    <summary>Opacity <em>per-splat cull</em><i class="gflag"></i></summary>
+    <div class="row"><label>Min opacity</label><output id="o-cullA">—</output>
+      <input type="range" id="p-cullA" min="0" max="1" step="0.005" value="0"></div>
+    <div class="row"><label>Max splat size</label><output id="o-cullS">—</output>
+      <input type="range" id="p-cullS" min="0" max="1" step="0.002" value="1"></div>
+    <div class="row"><label>Size × all</label><output id="o-scale">—</output>
+      <input type="range" id="p-scale" min="0.05" max="3" step="0.01" value="1"></div>
+    <div class="row" title="A peak-alpha multiply on every splat, applied in the vertex shader before Spark's own minimum-alpha discard — so low opacity is a performance gain, not a cost. NOT uniform transparency: splats composite alpha-over, so dense regions stay solid while thin ones fade first and the model erodes edges-inward."><label>Opacity × all</label><output id="o-splatOpacity">—</output>
+      <input type="range" id="p-splatOpacity" min="-6" max="0.58" step="0.02" value="0"></div>
+    <div class="row" title="Clamps the longest scale axis against the MIDDLE one. 60 is off. Needle-shaped gaussians streak radially across the frame; a legitimate splat is a flat disc (two similar axes, one tiny) so its max/mid is near 1 and it is untouched."><label>Anisotropy limit</label><output id="o-anisoLimit">—</output>
+      <input type="range" id="p-anisoLimit" min="1" max="60" step="0.5" value="60"></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      Size and shape are independent failure modes — a needle can be small in volume and
+      still streak hundreds of pixels — so <strong>Anisotropy limit</strong> is not a
+      duplicate of <strong>Max splat size</strong>. It modifies geometry and costs real
+      detail; reach for the Optics section's <strong>Antialias floor</strong> first.
+    </p>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      <strong>Opacity × all</strong> is a peak-alpha multiply applied before Spark's own
+      minimum-alpha discard, so it both dims the model and thins it — but measured on a
+      44k capture the dimming dominates by a long way: at ×0.25 the brightest pixels are
+      down 93% while the lit area is down only 3%. Expect a fade, with a secondary
+      erosion at the edges. Above 1× is not "more": Spark's fragment shader gives alpha
+      over 1 a different, sharper-topped falloff, so it reads as harder-edged discs. It
+      does not replace <strong>Min opacity</strong>, which is the only one of these that
+      touches diffuse low-alpha haze.
+    </p>
+  </details>
+
+  <details class="mod" data-group="region">
+    <summary>Masks <em>sdf, 6 slots</em><i class="gflag"></i></summary>
+    <div class="btns" style="margin-bottom:9px" id="rgSlots">
+      <button type="button" data-slot="0" class="on">M1</button>
+      <button type="button" data-slot="1">M2</button>
+      <button type="button" data-slot="2">M3</button>
+      <button type="button" data-slot="3">M4</button>
+      <button type="button" data-slot="4">M5</button>
+      <button type="button" data-slot="5">M6</button>
+    </div>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="rgMode" title="What this slot does to the splats inside it">
+        <option value="off" selected>Off</option>
+        <option value="cut">Cut inside</option>
+        <option value="crop">Crop to shape</option>
+        <option value="color">Colorize inside</option>
+      </select>
+      <select id="rgShape" title="Signed-distance shape, own dyno implementation">
+        <option value="sphere" selected>Sphere</option>
+        <option value="box">Box</option>
+        <option value="ellipsoid">Ellipsoid</option>
+        <option value="cylinder">Cylinder</option>
+        <option value="capsule">Capsule</option>
+        <option value="plane">Plane</option>
+        <option value="all">All (no shape)</option>
+      </select>
+      <label class="check"><input type="checkbox" id="rgInvert"> Invert</label>
+    </div>
+    <div id="rgRows"><!-- 4 x 9 rows generated by buildRegionRows(), one wrapper per slot --></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      Own dyno SDF per slot — sphere/box/ellipsoid/cylinder/capsule/plane, all evaluated
+      unconditionally so no shape change ever recompiles. Centre and size are in units of
+      scene radius. <strong>Shrink</strong> softens splat scale toward the edge, replacing
+      the old Reveal effect's shrink-into-edge (a plane region in Cut mode reproduces it).
+      Colorize R/G/B only apply in Colorize mode. Any of Noise / Saturation / Tint / Opacity
+      below can be scoped to one of these four slots via its own <em>Mask</em> control in the
+      lane — independent of what this slot's own Mode is doing.
+    </p>
+  </details>
+
+  <details class="mod" data-group="depth">
+    <summary>Depth <em>fade + field</em><i class="gflag"></i></summary>
+    <div class="subhead">Depth of field <em>lens blur</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Spark's own per-splat circle-of-confusion blur — a defocused splat is exactly another (wider, dimmer) Gaussian, so this composites correctly through the existing sort with no special handling. <strong>100 is exactly off</strong>, on the fast path, not an invisible blur still paying for itself.</p>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="dofFocusSrc" title="Pivot: the camera-to-orbit-target distance, whatever you are actually looking at — focus stays on the subject through a camera move. Fixed: scene radius, camera-independent — focus travels with the camera and the subject moves through the focal plane. Mask: that slot's centre distance from the camera, tracked every frame, so moving or animating the mask pulls focus. Picked: a point tapped on the model, which stays locked as you orbit. Focus below offsets whichever is chosen.">
+        <option value="manual" selected>Focus on pivot</option>
+        <option value="picked" disabled>Focus on picked point</option>
+        <option value="fixed">Focus at fixed distance</option>
+        <option value="1">Focus-pull: Mask 1</option>
+        <option value="2">Focus-pull: Mask 2</option>
+        <option value="3">Focus-pull: Mask 3</option>
+        <option value="4">Focus-pull: Mask 4</option>
+        <option value="5">Focus-pull: Mask 5</option>
+        <option value="6">Focus-pull: Mask 6</option>
+      </select>
+    </div>
+    <div class="btns" style="margin-bottom:9px">
+      <button type="button" id="pickToggle" aria-pressed="false" title="Tap the model to focus on what you tapped. The point stays locked in world space as you orbit, and Focus (stops) still offsets from it.">Pick focus</button>
+      <button type="button" id="pickClear" disabled title="Return the focus source to the pivot.">Unlock</button>
+    </div>
+    <div class="row" title="How much accumulated alpha counts as 'a surface'. Below 0.5 picks front haze, above it picks deeper into the cloud."><label>Pick threshold</label><output id="o-pickThresh">—</output>
+      <input type="range" id="p-pickThresh" min="0.05" max="0.95" step="0.01" value="0.5"></div>
+    <div class="row" title="Depth of field, 0 = maximum blur, 100 = none. Deliberately not an f-number: Spark's apertureAngle is not calibrated to a physical aperture, so a real-lens label would be photographically meaningless."><label>Depth of field</label><output id="o-dof">—</output>
+      <input type="range" id="p-dof" min="0" max="100" step="0.5" value="100"></div>
+    <div class="row" title="Focus offset in stops (doublings) from the focus source above. 0 focuses exactly on it, +1 twice as far, -1 half as far. Scale-free, so the same slider position means the same thing on a tabletop scan and on a building."><label>Focus (stops)</label><output id="o-dofStops">—</output>
+      <input type="range" id="p-dofStops" min="-5" max="5" step="0.05" value="0"></div>
+    <div class="row" title="Multiplies blur on the camera side of the focal surface only. Deliberately non-physical: blur scales with the absolute depth error, and between the camera and the focal surface there is only F of depth to be wrong by, where behind it there is unlimited depth — so the far side goes fully soft and the near side cannot. 1 is off."><label>Near blur boost</label><output id="o-nearBoost">—</output>
+      <input type="range" id="p-nearBoost" min="1" max="8" step="0.05" value="1"></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      Focus is an <strong>offset in stops from the pivot</strong>, not an absolute
+      distance — the pivot describes what is being looked at, where scene radius
+      describes the whole scan and stops meaning nothing once you have dollied into a
+      detail. Gaussian bokeh only: no aperture shape, no cat's-eye, no shaped highlight
+      discs. Those need a custom splat shader; out of scope here.
+    </p>
+    <div class="subhead">Depth fade <em>aerial perspective</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Fades opacity and tints toward the current Background colour with distance — dissolves distant splats into the backdrop. No effect at Amount 0.</p>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="dpMode" title="Planar: distance along the camera's view direction (a Z-depth). Radial: straight-line distance to the camera.">
+        <option value="planar" selected>Planar (view direction)</option>
+        <option value="radial">Radial (distance)</option>
+      </select>
+    </div>
+    <div class="row"><label>Amount</label><output id="o-dpAmt">—</output>
+      <input type="range" id="p-dpAmt" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>Near</label><output id="o-dpNear">—</output>
+      <input type="range" id="p-dpNear" min="0" max="5" step="0.02" value="1"></div>
+    <div class="row"><label>Far</label><output id="o-dpFar">—</output>
+      <input type="range" id="p-dpFar" min="0" max="8" step="0.02" value="3"></div>
+  </details>
+
+  <details class="mod" data-group="optics">
+    <summary>Optics <em>lens body</em><i class="gflag"></i></summary>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Renderer-level properties, not per-splat modifiers — these apply to every gaussian on every frame whether or not depth of field is on.</p>
+    <div class="row debug-only" title="A constant term added to every splat's projected 2D covariance. Spark's own default is 0.3, and it is antialiasing: the energy correction that follows attenuates a sub-pixel-thin needle by ~75% against ~7% for a round splat. Lower it for maximum clarity, raise it if a capture still shows shards. Demoted to ?debug=1 — 0.3 fixed the shard hunt and is a per-capture value, not a constant to hard-code again."><label>Antialias floor</label><output id="o-blurAmount">—</output>
+      <input type="range" id="p-blurAmount" min="0" max="1.5" step="0.01" value="0.3"></div>
+    <div class="subhead">Focal surface <em>scheimpflug + curvature</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Bends and tips the surface that is in focus. All three do nothing at Depth of field 100, because there is no blur for them to shape.</p>
+    <div class="row" title="Bows the focal surface toward or away from the camera at the frame edges — positive pushes the corners further away, negative pulls them nearer. Real lenses do this whether you want them to or not."><label>Field curvature</label><output id="o-fieldCurve">—</output>
+      <input type="range" id="p-fieldCurve" min="-2" max="2" step="0.01" value="0"></div>
+    <div class="row" title="Tips the focal surface about the horizontal axis, like a view camera's front standard. Stored as a tangent: the shader wants a depth gradient per unit of view-space offset."><label>Tilt</label><output id="o-planeTilt">—</output>
+      <input type="range" id="p-planeTilt" min="-75" max="75" step="0.5" value="0"></div>
+    <div class="row" title="The same, about the vertical axis."><label>Swing</label><output id="o-planeSwing">—</output>
+      <input type="range" id="p-planeSwing" min="-75" max="75" step="0.5" value="0"></div>
+    <div class="subhead">Swirl <em>tangential defocus</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Stretches defocused splats tangentially around the frame centre — the petzval / swirly-bokeh look. Coupled to the amount of defocus, so an in-focus subject stays clean and only the surround swirls. Nothing happens at Depth of field 100.</p>
+    <div class="row" title="Magnitude, in the same px^2 units as the projected covariance. Coupled to the local defocus amount, so this is a multiplier on blur that already exists, not blur of its own."><label>Swirl</label><output id="o-swirlAmt">—</output>
+      <input type="range" id="p-swirlAmt" min="0" max="30" step="0.1" value="0"></div>
+    <div class="row" title="How sharply swirl ramps from the frame centre to the corners. 0 is uniform across the frame; higher confines it to the edges."><label>Swirl falloff</label><output id="o-swirlFalloff">—</output>
+      <input type="range" id="p-swirlFalloff" min="0" max="5" step="0.05" value="2"></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      <strong>0.3 is the figure for scenes trained <em>with</em> antialiasing</strong> — a
+      capture trained without it may want another value. This is per-capture, not a
+      constant. It is the first thing to reach for when a large capture shows radial
+      needle shards; the Opacity section's <strong>Anisotropy limit</strong> is the second.
+    </p>
+  </details>
+
+  <details class="mod" data-group="colour">
+    <summary>Colour <em>tint + saturation</em><i class="gflag"></i></summary>
+    <div class="row"><label>Brightness</label><output id="o-bright">—</output>
+      <input type="range" id="p-bright" min="0" max="2" step="0.01" value="1"></div>
+    <div class="row"><label>R</label><output id="o-tR">—</output>
+      <input type="range" id="p-tR" min="0" max="2" step="0.01" value="1"></div>
+    <div class="row"><label>G</label><output id="o-tG">—</output>
+      <input type="range" id="p-tG" min="0" max="2" step="0.01" value="1"></div>
+    <div class="row"><label>B</label><output id="o-tB">—</output>
+      <input type="range" id="p-tB" min="0" max="2" step="0.01" value="1"></div>
+    <div class="row"><label>Saturation</label><output id="o-sat">—</output>
+      <input type="range" id="p-sat" min="0" max="2" step="0.01" value="1"></div>
+  </details>
+
+  <details class="mod" data-group="displace">
+    <summary>Noise <em>displacement field</em><i class="gflag"></i></summary>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="dField" title="Sin: the original field. Curl: volume-preserving swirl, does not inflate the cloud.">
+        <option value="sin" selected>Sin field</option>
+        <option value="curl">Curl (volume-preserving)</option>
+      </select>
+    </div>
+    <div class="row"><label>Amount</label><output id="o-dAmt">—</output>
+      <input type="range" id="p-dAmt" min="0" max="0.5" step="0.001" value="0"></div>
+    <div class="row"><label>Frequency</label><output id="o-dFrq">—</output>
+      <input type="range" id="p-dFrq" min="0.05" max="20" step="0.05" value="2"></div>
+    <div class="row"><label>Drift speed</label><output id="o-dSpd">—</output>
+      <input type="range" id="p-dSpd" min="0" max="3" step="0.01" value="0.3"></div>
+    <div class="row"><label>Per-splat scatter</label><output id="o-dRnd">—</output>
+      <input type="range" id="p-dRnd" min="0" max="1" step="0.01" value="1"></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">Displace by colour — offsets along one axis by the splat's own raw luminance or hue, centred so mid-tones don't move.</p>
+    <div class="btns" style="margin:9px 0">
+      <select id="dcMode" title="Off, or drive the offset below from luminance/hue">
+        <option value="off" selected>Off</option>
+        <option value="luma">By luminance</option>
+        <option value="hue">By hue</option>
+      </select>
+      <select id="dcAxis" title="Which world axis the colour offset moves along">
+        <option value="x">X axis</option>
+        <option value="y" selected>Y axis</option>
+        <option value="z">Z axis</option>
+      </select>
+    </div>
+    <div class="row"><label>Colour offset</label><output id="o-dcAmt">—</output>
+      <input type="range" id="p-dcAmt" min="-0.5" max="0.5" step="0.001" value="0"></div>
+  </details>
+
+  <details class="mod" data-group="quantise">
+    <summary>Quantise <em>voxel snap</em><i class="gflag"></i></summary>
+    <div class="row"><label>Amount</label><output id="o-qAmt">—</output>
+      <input type="range" id="p-qAmt" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>Cell X</label><output id="o-qCellX">—</output>
+      <input type="range" id="p-qCellX" min="0.005" max="1" step="0.005" value="0.1"></div>
+    <div class="row"><label>Cell Y</label><output id="o-qCellY">—</output>
+      <input type="range" id="p-qCellY" min="0.005" max="1" step="0.005" value="0.1"></div>
+    <div class="row"><label>Cell Z</label><output id="o-qCellZ">—</output>
+      <input type="range" id="p-qCellZ" min="0.005" max="1" step="0.005" value="0.1"></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">Grid basis — rotates the snap grid before quantising, so it does not have to align with the world axes.</p>
+    <div class="row"><label>Grid rot X</label><output id="o-qRotX">—</output>
+      <input type="range" id="p-qRotX" min="-180" max="180" step="1" value="0"></div>
+    <div class="row"><label>Grid rot Y</label><output id="o-qRotY">—</output>
+      <input type="range" id="p-qRotY" min="-180" max="180" step="1" value="0"></div>
+    <div class="row"><label>Grid rot Z</label><output id="o-qRotZ">—</output>
+      <input type="range" id="p-qRotZ" min="-180" max="180" step="1" value="0"></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">Single-axis mode overrides the 3-axis grid above: only that axis snaps, with a per-band random offset — stratification / scanline, not cubic voxels.</p>
+    <div class="btns" style="margin:9px 0">
+      <select id="qAxis" title="Off = the rotated 3-axis grid above. X/Y/Z = single-axis stratify instead.">
+        <option value="off" selected>3-axis grid</option>
+        <option value="x">Single axis: X</option>
+        <option value="y">Single axis: Y</option>
+        <option value="z">Single axis: Z</option>
+      </select>
+    </div>
+    <div class="row"><label>Band offset</label><output id="o-qStrat">—</output>
+      <input type="range" id="p-qStrat" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>Colour posterise</label><output id="o-qPoster">—</output>
+      <input type="range" id="p-qPoster" min="0" max="1" step="0.01" value="0"></div>
+  </details>
+
+  <details class="mod" data-group="wave">
+    <summary>Wave <em>index-phase sweep</em><i class="gflag"></i></summary>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Modulates Noise amount, Quantise amount and each Mask's Attract amount with a per-splat, animated 0..1 envelope — so those effects sweep through the cloud instead of applying uniformly. No effect at Amount 0.</p>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="wMode" title="Per-splat phase source">
+        <option value="hash" selected>Per-splat (hash)</option>
+        <option value="x">Position: X</option>
+        <option value="y">Position: Y</option>
+        <option value="z">Position: Z</option>
+      </select>
+    </div>
+    <div class="row"><label>Amount</label><output id="o-wAmt">—</output>
+      <input type="range" id="p-wAmt" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>Frequency</label><output id="o-wFreq">—</output>
+      <input type="range" id="p-wFreq" min="0.1" max="20" step="0.05" value="2"></div>
+    <div class="row"><label>Speed</label><output id="o-wSpd">—</output>
+      <input type="range" id="p-wSpd" min="0" max="3" step="0.01" value="0.3"></div>
+  </details>
+
+  <details class="mod" data-group="smear">
+    <summary>Smear <em>screen-space streak</em><i class="gflag"></i></summary>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Stretches each splat's own projected shape along a fixed screen-space direction — the same covariance-plus-energy-correction machinery Depth of field uses, so the two compose. Screen-space, not per-splat: a uniform streak direction, not each splat's own motion. No effect at Amount 0.</p>
+    <div class="row"><label>Amount</label><output id="o-smearAmt">—</output>
+      <input type="range" id="p-smearAmt" min="0" max="2000" step="5" value="0"></div>
+    <div class="row"><label>Angle</label><output id="o-smearAngle">—</output>
+      <input type="range" id="p-smearAngle" min="0" max="180" step="1" value="0"></div>
+  </details>
+
+  <details class="mod" data-group="film">
+    <summary>Film <em>emulsion profile</em><i class="gflag"></i></summary>
+    <div class="subhead">Profile <em>emulsion</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Parametric approximations, hand-tuned rather than measured — named descriptively rather than after real stocks, so nothing here claims an accuracy it does not have. <strong>Intensity 0 is an exact bypass</strong>, the only honest way to A/B a look.</p>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="filmProfile" title="Selects a fixed set of spectral sensitivity, colour response, contrast and halation values. Not itself animatable — switch looks, then animate Intensity/Halation/Veil/Highlight rolloff/Shadow lift around the chosen one.">
+        <option value="none" selected>None (bypass)</option>
+      </select>
+    </div>
+    <div class="row" title="0 bypasses the whole film chain exactly — the only honest way to A/B against the untouched render."><label>Intensity</label><output id="o-filmMix">—</output>
+      <input type="range" id="p-filmMix" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row" title="A tight bright-pass ring blur that blooms highlights warm — light scattering inside the film base. Different from Veiling flare below: narrow radius, high threshold, rings around bright points."><label>Halation</label><output id="o-halScale">—</output>
+      <input type="range" id="p-halScale" min="0" max="2" step="0.01" value="1"></div>
+    <div class="row" title="A wide, low-threshold, low-amplitude lift across the whole frame — uncoated-lens scatter, not halation. This is most of the 'soft large-format glow' cue."><label>Veiling flare</label><output id="o-veil">—</output>
+      <input type="range" id="p-veil" min="0" max="1.5" step="0.01" value="0"></div>
+    <div class="row" title="Offset on top of the selected profile's own highlight rolloff white point (extended Reinhard) — lower compresses harder. 0 leaves the profile's own value untouched; the profile still supplies the baseline, this only shifts it."><label>Highlight rolloff</label><output id="o-filmWhite">—</output>
+      <input type="range" id="p-filmWhite" min="-2" max="3" step="0.05" value="0"></div>
+    <div class="row" title="Offset on top of the selected profile's own shadow lift (additive black lift, in linear). 0 leaves the profile's own value untouched."><label>Shadow lift</label><output id="o-filmLift">—</output>
+      <input type="range" id="p-filmLift" min="-0.05" max="0.05" step="0.001" value="0"></div>
+
+    <div class="subhead">Grade <em>print</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">A grade layered on the profile's values, not a replacement — every control here works with no profile selected, and every control is an exact bypass at its own neutral value.</p>
+    <div class="row" title="In stops. Linear, before the film response curve — the one control here that already existed, moved to sit with the rest of this linear group."><label>Exposure</label><output id="o-exposure">—</output>
+      <input type="range" id="p-exposure" min="-2" max="2" step="0.02" value="0"></div>
+    <div class="row" title="White balance, warm/cool axis. Applied in linear, before the tone curve — a display-space white balance produces a colour crossover in the highlights; this does not."><label>Temperature</label><output id="o-gTemp">—</output>
+      <input type="range" id="p-gTemp" min="-1" max="1" step="0.01" value="0"></div>
+    <div class="row" title="White balance, green/magenta axis. Same linear placement as Temperature, for the same reason."><label>Tint</label><output id="o-gTint">—</output>
+      <input type="range" id="p-gTint" min="-1" max="1" step="0.01" value="0"></div>
+    <div class="row" title="Display-space contrast about a mid-grey (0.5) pivot — a print grade, applied after the profile's own tone curve."><label>Contrast</label><output id="o-gCon">—</output>
+      <input type="range" id="p-gCon" min="0.5" max="2" step="0.01" value="1"></div>
+    <div class="row" title="Shadows. Tapers toward white rather than a flat offset across the whole range, so it reads as a shadow control rather than fogging the highlights too."><label>Lift</label><output id="o-gLift">—</output>
+      <input type="range" id="p-gLift" min="-0.1" max="0.1" step="0.001" value="0"></div>
+    <div class="row" title="Midtones. A display-space exponent, same convention as the profile's own Contrast but a separate control."><label>Gamma</label><output id="o-gGamma">—</output>
+      <input type="range" id="p-gGamma" min="0.5" max="2" step="0.01" value="1"></div>
+    <div class="row" title="Highlights. A display-space multiplier."><label>Gain</label><output id="o-gGain">—</output>
+      <input type="range" id="p-gGain" min="0.5" max="2" step="0.01" value="1"></div>
+    <div class="row" title="Saturation OFFSET, on top of whatever the profile's own saturation already produced (or the untouched render, with no profile). A different control at a different pipeline stage from the profile's own Sat."><label>Saturation</label><output id="o-gSat">—</output>
+      <input type="range" id="p-gSat" min="0" max="2" step="0.01" value="1"></div>
+  </details>
+
+  <details class="mod" data-group="frame">
+    <summary>Frame <em>vignette + rebate</em><i class="gflag"></i></summary>
+    <div class="subhead">Vignette <em>lens falloff</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">A fullscreen pass over the finished render, not a per-splat effect — darkens toward the edges in linear light, so it behaves like lost light rather than revealing the background through a translucent cloud. No effect at Amount 0.</p>
+    <div class="row"><label>Amount</label><output id="o-vigAmt">—</output>
+      <input type="range" id="p-vigAmt" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>Radius</label><output id="o-vigRadius">—</output>
+      <input type="range" id="p-vigRadius" min="0.1" max="1.6" step="0.01" value="0.65"></div>
+    <div class="row"><label>Softness</label><output id="o-vigSoft">—</output>
+      <input type="range" id="p-vigSoft" min="0.05" max="1.5" step="0.01" value="0.75"></div>
+    <div class="subhead">Rebate <em>film edge</em></div>
+    <p style="color:var(--ink-dim); margin:0 0 8px">The physical carrier around the image, applied last — crop, fill, rounded-box edge with a noise-perturbed border. No effect at Border 0 or Aspect "No frame".</p>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="frAspect">
+        <option value="0" selected>No frame</option>
+        <option value="1.0">Square 1:1</option>
+        <option value="0.8">Portrait 4:5</option>
+        <option value="1.25">Landscape 5:4</option>
+        <option value="1.333">Landscape 4:3</option>
+      </select>
+    </div>
+    <div class="row"><label>Fill</label><output id="o-frFill">—</output>
+      <input type="range" id="p-frFill" min="0.5" max="1" step="0.005" value="0.9"></div>
+    <div class="row"><label>Border</label><output id="o-frBorder">—</output>
+      <input type="range" id="p-frBorder" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>Edge irregularity</label><output id="o-frJitter">—</output>
+      <input type="range" id="p-frJitter" min="0" max="1" step="0.01" value="0.4"></div>
+    <div class="row"><label>Corner radius</label><output id="o-frRadius">—</output>
+      <input type="range" id="p-frRadius" min="0" max="0.2" step="0.002" value="0.02"></div>
+    <div class="row"><label>Tilt</label><output id="o-frTilt">—</output>
+      <input type="range" id="p-frTilt" min="-3" max="3" step="0.05" value="0"></div>
+  </details>
+
+  <details class="mod" data-group="grain">
+    <summary>Grain <em>post pass</em><i class="gflag"></i></summary>
+    <p style="color:var(--ink-dim); margin:0 0 8px">Simulated film grain in the finished image, sized in output pixels so a setting matches across export resolutions. Re-randomised every frame rather than translated, so it reads as grain rather than a sliding texture. No effect at Amount 0.</p>
+    <div class="row"><label>Amount</label><output id="o-grainAmt">—</output>
+      <input type="range" id="p-grainAmt" min="0" max="0.5" step="0.005" value="0"></div>
+    <div class="row"><label>Size (px)</label><output id="o-grainSize">—</output>
+      <input type="range" id="p-grainSize" min="0.5" max="14" step="0.5" value="3"></div>
+    <div class="row"><label>Colour</label><output id="o-grainColor">—</output>
+      <input type="range" id="p-grainColor" min="0" max="1" step="0.01" value="0"></div>
+  </details>
+
+  <details class="mod" data-group="audio">
+    <summary>Audio <em>fft drive</em><i class="gflag"></i></summary>
+    <div class="btns" style="margin-bottom:9px">
+      <button id="audSystem">Use system audio</button>
+      <button id="audSystemStop" disabled>Stop listening</button>
+    </div>
+    <p id="audLiveStatus" aria-live="polite" style="color:var(--ink-dim)">Choose Entire screen and enable Share system audio. Sound is processed locally.</p>
+    <div class="row"><label for="audSensitivity">Live sensitivity</label>
+      <input id="audSensitivity" type="range" min="0.25" max="8" step="0.05" value="2"></div>
+    <div class="btns" style="margin-bottom:9px">
+      <button id="audLoad">Load audio</button>
+      <button id="audBassNoise" title="Map the track's bass to gentle noise displacement">Bass → Noise</button>
+      <button id="audMute" disabled>Mute</button>
+      <button id="audClear" disabled>Clear</button>
+    </div>
+    <div id="audName" style="color:var(--ink-dim); margin-bottom:8px">no audio loaded</div>
+    <div class="btns" style="margin-bottom:9px">
+      <button id="audLoopBtn" disabled title="Repeat the track for as long as the timeline runs. Off, a track shorter than Duration plays once and the remainder is silent.">Loop</button>
+      <label class="audlbl" style="margin-left:4px">Duration</label>
+      <input type="number" id="audLoops" min="1" max="64" step="1" value="1"
+             style="width:44px" title="Number of track lengths to fit into Duration">
+      <button id="audFitDur" disabled title="Set Duration to exactly this many track lengths">× set</button>
+    </div>
+    <div class="meter"><label>Low</label><div class="bar"><i id="m-low"></i></div><output id="o-mlow">0.00</output></div>
+    <div class="meter"><label>Mid</label><div class="bar"><i id="m-mid"></i></div><output id="o-mmid">0.00</output></div>
+    <div class="meter"><label>High</label><div class="bar"><i id="m-high"></i></div><output id="o-mhigh">0.00</output></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      System audio drives the effects live, even with the timeline paused.
+      Audio files can be scrubbed and exported. Click a parameter's <em>name</em>,
+      then pick a band in the lane below. Audio adds on top of any envelope.
+    </p>
+  </details>
+
+  <details class="mod" data-group="output" open>
+    <summary>Output <em>webcodecs</em><i class="gflag"></i></summary>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="res">
+        <option value="1280x720">1280 × 720</option>
+        <option value="1920x1080" selected>1920 × 1080</option>
+        <option value="2560x1440">2560 × 1440</option>
+        <option value="1080x1920">1080 × 1920 (vertical)</option>
+      </select>
+      <select id="fps">
+        <option value="24">24 fps</option>
+        <option value="25">25 fps</option>
+        <option value="30" selected>30 fps</option>
+        <option value="60">60 fps</option>
+      </select>
+    </div>
+    <div class="row"><label>Bitrate (Mbps)</label><output id="o-br">—</output>
+      <input type="range" id="p-br" min="2" max="80" step="1" value="20"></div>
+    <div class="row"><label>Sort settle (ms)</label><output id="o-settle">—</output>
+      <input type="range" id="p-settle" min="0" max="200" step="4" value="0"></div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      Each frame now awaits Spark's own generate+sort completion, so this should stay
+      at 0. It is an extra manual wait kept only as an escape hatch if a capture ever
+      still shows wrong-order blending that the live view doesn't.
+    </p>
+  </details>
+
+  <details class="mod" data-group="preset">
+    <summary>Preset <em>json</em><i class="gflag"></i></summary>
+    <div class="btns">
+      <button id="savePreset">Save JSON</button>
+      <button id="loadPreset">Load JSON</button>
+    </div>
+    <p style="color:var(--ink-dim); margin:8px 0 0">
+      Saves every parameter, envelope, toggle and camera key — everything except the
+      splat itself, which is referenced by name only. Drop a .json on the viewport to load.
+    </p>
+  </details>
+
+  <details class="mod" data-group="viewport">
+    <summary>Viewport<i class="gflag"></i></summary>
+    <div class="btns" style="margin-bottom:9px">
+      <select id="bgColor" title="Applies to the live view and export — not the effect stack, which is always measured against Void">
+        <option value="void" selected>Void</option>
+        <option value="black">Black</option>
+        <option value="grey">Mid grey</option>
+        <option value="white">White</option>
+        <option value="chroma">Chroma green</option>
+      </select>
+    </div>
+    <div class="row"><label>Pixel ratio</label><output id="o-dpr">—</output>
+      <input type="range" id="p-dpr" min="0.5" max="2" step="0.05" value="1"></div>
+    <label class="check"><input type="checkbox" id="useLod"> Level of detail on next load (large scans)</label>
+    <label class="check"><input type="checkbox" id="mobileMode"> Mobile profile (caps pixel ratio, forces LOD)</label>
+    <div class="btns"><button id="reframe">Reframe</button><button id="reload">Load another</button></div>
+  </details>
+</aside>
+
+<input type="file" id="file" accept=".ply,.spz,.splat,.ksplat,.sog,.zip,.rad" hidden>
+<input type="file" id="presetFile" accept=".json,application/json" hidden>
+<!-- iOS Safari greys out everything in Files when `accept` is a bare
+     `audio/*` wildcard — it matches against the system UTI rather than the
+     extension, so ordinary .wav/.mp3/.aiff on disk fail the filter. Listing
+     explicit extensions alongside the wildcard makes them selectable. -->
+<input type="file" id="audioFile" hidden
+       accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.oga,.opus,.flac,.aif,.aiff,.caf,.webm">
+
+<!-- Bindings overlay — `?`, desktop keyboard nav. Dismissed on Esc or a
+     click anywhere on the backdrop; see setKbdOverlay() below. -->
+<div id="kbdOverlay" class="hide">
+  <div id="kbdPanel">
+    <h2>Keyboard</h2>
+    <table>
+      <tr><td>Space</td><td>play / pause</td></tr>
+      <tr><td>, .</td><td>step one frame back / forward</td></tr>
+      <tr><td>Shift + , .</td><td>jump to previous / next camera keyframe</td></tr>
+      <tr><td>Home / End</td><td>playhead to start / end</td></tr>
+      <tr><td>[ ]</td><td>focus offset down / up, one small step</td></tr>
+      <tr><td>1 – 6</td><td>select region slot</td></tr>
+      <tr><td>R</td><td>reframe</td></tr>
+      <tr><td>H</td><td>hide / show the rail — preview the frame clean</td></tr>
+      <tr><td>Hold A</td><td>Adjust — release to return to the previous mode</td></tr>
+      <tr><td>Hold F</td><td>Focus pick — release to return to the previous mode</td></tr>
+      <tr><td>Esc</td><td>exit any transient mode, clear a focus lock</td></tr>
+      <tr><td>?</td><td>this overlay</td></tr>
+    </table>
+    <p>Desktop only. Correct has no hold binding — it needs both hands and time.</p>
+  </div>
+</div>
+
+<script type="module" src="/src/engine.mjs"></script>
+</body>
+</html>

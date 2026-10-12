@@ -1,0 +1,21 @@
+{
+  "name": "splatitude",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local music playground for your Gaussian splats",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node test/browser.mjs"
+  },
+  "dependencies": {
+    "@sparkjsdev/spark": "2.1.0",
+    "mp4-muxer": "5.2.2",
+    "three": "0.180.0"
+  },
+  "devDependencies": { "playwright": "1.55.1" }
+}

@@ -1,0 +1,54 @@
+<header id="appHeader">
+  <a class="brand" href="/" aria-label="Splatitude home"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M5 18h4m4-8v16m5-22v28m5-23v18m5-13v8m4-4h1"/></svg><span>splatitude<span class="brandDot">.</span></span></a>
+  <button id="mobileLibrary" class="mobileLibraryButton" style="display:none" aria-expanded="false">Spaces ▾</button>
+  <div class="headerContext">A little space. A lot of sound.</div>
+  <div class="headerActions"><span class="localBadge"><i></i> ALL LOCAL</span><button id="advancedToggle" aria-pressed="false">Advanced editor <span>↗</span></button></div>
+</header>
+<aside id="libraryPanel" aria-label="Splat library">
+  <div class="sectionEyebrow">THE COLLECTION <span id="libraryCount">—</span></div>
+  <div class="sectionHeading"><h2>Your spaces</h2><button id="refreshLibrary" class="iconButton" aria-label="Refresh completed splats" title="Find newly completed exports">↻</button></div>
+  <p class="muted intro">Real places. New frequencies.</p>
+  <div id="libraryList" aria-live="polite"><p class="muted">Finding completed splats…</p></div>
+  <button id="importSplat" class="subtleButton">＋ Open a splat file</button>
+  <p id="libraryHelp" class="finePrint">Finished SHARE scans appear here automatically. Refresh after a new export finishes.</p>
+  <div class="libraryFooter"><span class="tinyMark">S</span><div>Made for wandering.<br><span class="muted">Drag to orbit · scroll to explore</span></div></div>
+</aside>
+<div id="sceneCaption"><span class="eyebrow" id="sceneCategory">YOUR CURRENT SPACE</span><h1 id="sceneTitle">Pick a place to begin</h1><p id="sceneInfo">Your scan stays on this computer.</p></div>
+<div id="sceneTools"><button id="homeView" title="Restore this splat's saved view">⌂ <span>Home view</span></button><button id="saveView" title="Remember the current camera for this splat">Save view</button><button id="present" title="Hide controls for a performance (H)">↗ <span>Perform</span></button></div>
+<button id="exitPerformance">← Back to controls</button>
+<aside id="performancePanel" aria-label="Music and effects">
+  <div class="performanceScroll">
+  <section class="performanceSection">
+    <div class="sectionEyebrow">01 / THE SOUND <span id="sourceBadge">READY</span></div>
+    <h2>Give it a pulse.</h2>
+    <p class="muted">Turn whatever’s playing into a place you can feel.</p>
+    <button id="connectAudio" class="primaryButton"><span class="buttonIcon">≋</span><span>Use system audio</span><span>↗</span></button>
+    <button id="openTrack" class="subtleButton">Or open an audio track <span>＋</span></button>
+    <p id="audioGuide" class="finePrint">Choose <strong>Entire screen</strong>, enable <strong>Share system audio</strong>, then Share.</p>
+    <div class="frequencyDisplay"><canvas id="frequencyCanvas" width="560" height="140" aria-label="Live audio frequency spectrum"></canvas><div><span>BASS</span><span>MID</span><span>TREBLE</span></div></div>
+    <div class="masterRow"><label for="liveSensitivity">Sensitivity</label><output id="sensitivityValue">2.0×</output></div>
+    <input id="liveSensitivity" class="wideSlider" type="range" min="0.25" max="8" step="0.05" value="2" aria-label="Audio sensitivity">
+    <p id="sourceName" class="sourceName" aria-live="polite">Waiting for sound</p>
+  </section>
+  <section class="performanceSection">
+    <div class="sectionEyebrow">02 / THE LOOK <span>LIVE SWITCHING</span></div>
+    <div class="sectionHeading"><h2>Find your frequency.</h2></div>
+    <div id="lookGrid" class="lookGrid" aria-label="Visual looks"></div>
+    <p id="lookNote" class="finePrint">Bass you can feel</p>
+  </section>
+  </div>
+  <section class="performanceSection feelSection">
+    <div class="sectionEyebrow">03 / THE FEEL <button id="bypassEffects" aria-pressed="false" title="Compare with the original scan">A/B original</button></div>
+    <div class="masterRow intensityLabel"><label for="masterIntensity">Intensity</label><output id="intensityValue">100<span>%</span></output></div>
+    <input id="masterIntensity" class="wideSlider" type="range" min="0" max="2" step="0.01" value="1" aria-label="Effect intensity">
+    <div class="rangeLabels"><span>SUBTLE</span><span>ALL IN</span></div>
+    <div class="feelButtons" aria-label="Audio response"><button data-feel="tight">Tight</button><button data-feel="balanced" class="selected">Balanced</button><button data-feel="float">Float</button></div>
+    <div class="sessionButtons"><button id="saveSession">Save preset ↓</button><button id="openSession">Open preset ↑</button></div>
+  </section>
+</aside>
+<footer id="performanceFooter">
+  <div class="footerState"><i id="audioDot"></i><span id="footerState">Choose a space. Bring the music.</span></div>
+  <button id="trackPlay" disabled aria-label="Play audio track">▶ <span>Play track</span></button>
+  <div class="footerStats"><span id="performanceSplats">—</span><span id="performanceFps">—</span><button id="fullScreen" aria-label="Toggle fullscreen">⛶</button></div>
+</footer>
+<div id="toast" role="status" aria-live="polite"></div>

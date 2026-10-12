@@ -1,0 +1,13 @@
+node_modules/
+.local/
+library/
+verification/
+*.log
+*.ply
+*.splat
+*.spz
+*.sog
+*.ksplat
+*.bag
+*.mp4
+.DS_Store

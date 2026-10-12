@@ -1,0 +1,60 @@
+function setShareHome(options) {
+  xform = { ...XFORM_DEFAULT, rotX: -90 };
+  applyXform(); refreshModelUI(); setCamMode('manual');
+  if ([options.view?.position, options.view?.target].every(v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite))) {
+    camera.position.fromArray(options.view.position); controls.target.fromArray(options.view.target);
+  } else if (options.firstCamera?.length === 4) {
+    const m = options.firstCamera;
+    camera.position.set(m[0][3], m[2][3], -m[1][3]);
+    const direction = new THREE.Vector3(-m[0][2], -m[2][2], m[1][2]).normalize();
+    controls.target.copy(camera.position).addScaledVector(direction, Math.max(1, radius * 0.15));
+  } else {
+    reframe();
+  }
+  controls.update();
+}
+
+const engineAPI = {
+  loadSplat, startSystemAudio, stopSystemAudio, resize,
+  startFile: () => $('audioFile').click(),
+  openSplat: () => $('file').click(),
+  savePreset: () => $('savePreset').click(),
+  openPreset: () => $('presetFile').click(),
+  play: () => $('play').click(),
+  home: setShareHome,
+  getView: () => ({ position: camera.position.toArray(), target: controls.target.toArray() }),
+  setView(view) {
+    if (![view?.position, view?.target].every(v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite))) return;
+    setCamMode('manual'); camera.position.fromArray(view.position); controls.target.fromArray(view.target); controls.update();
+  },
+  setSensitivity(value) { $('audSensitivity').value = value; if (liveAudio) liveAudio.sensitivity = value; },
+  setMix(value) { performanceMix = clampNum(value, 0, 2); pushUniforms(); },
+  setBypass(value) { performanceBypass = !!value; pushUniforms(); },
+  applyLook(look, controlledIds, feel) {
+    performanceLook = look.id; performanceBypass = false; performanceIds = new Set(controlledIds);
+    for (const id of controlledIds) { setParam(id, Number(DEFAULT[id])); if (ENV[id]) ENV[id].on = false; }
+    for (const id of Object.keys(AUD)) delete AUD[id];
+    for (const [id, value] of Object.entries(look.params)) setParam(id, value);
+    for (const id of ['dField', 'wMode']) $(id).value = look.selects?.[id] || $(id).options[0].value;
+    for (const [id, [band, depth]] of Object.entries(look.routes)) Object.assign(audOf(id), { band, depth, ...feel });
+    shapeCache.clear();
+    pushUniforms(); syncSliders(); refreshKeyBtns(); refreshGroups();
+    focusParam(Object.keys(look.routes)[0] || 'dAmt');
+  },
+  setFeel(feel) { for (const route of Object.values(AUD)) Object.assign(route, feel); shapeCache.clear(); },
+  setQuality(value) { setParam('dpr', value); dpr = value; resize(); },
+  state: () => ({ loading: splatLoading, rendering, live: !!liveAudio?.active, liveStatus: $('audLiveStatus').textContent,
+    hasAudio: !!audioEnv, audioName, audioDur, playing, levels: { ...audioLevel },
+    spectrum: liveAudio?.spectrum, liveAudio, splats: $('t-splats').textContent, fps: $('t-fps').textContent,
+    error: $('t-state').textContent === 'error', status: $('status').textContent,
+    mix: performanceMix, bypass: performanceBypass, look: performanceLook, asset: assetLabel }),
+  async thumbnail() {
+    await spark.update({ scene, camera });
+    pushUniforms(); controls.update(); pushCameraUniform(); updateShaderUniforms(); updateOptics(); renderWithPost();
+    const canvas = document.createElement('canvas'); canvas.width = 400; canvas.height = 240;
+    canvas.getContext('2d').drawImage(renderer.domElement, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/webp', 0.65);
+  },
+};
+if (DEBUG) window.__splatitude = engineAPI;
+mountSplatitude(engineAPI);
