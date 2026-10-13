@@ -159,7 +159,9 @@ export async function mountSplatitude(api) {
   };
   $('masterIntensity').value = number(prefs.read('mix', 1), 0, 2, 1);
   $('liveSensitivity').value = number(prefs.read('sensitivity', 2), 0.25, 8, 2);
-  function mixChanged() { const value = Number($('masterIntensity').value); api.setMix(value); prefs.write('mix', value); }
+  let persistedMix;
+  function persistMix(value) { persistedMix = value; prefs.write('mix', value); }
+  function mixChanged() { const value = Number($('masterIntensity').value); api.setMix(value); persistMix(value); }
   function sensitivityChanged() { const value = Number($('liveSensitivity').value); api.setSensitivity(value); prefs.write('sensitivity', value); }
   $('masterIntensity').oninput = mixChanged; $('liveSensitivity').oninput = sensitivityChanged;
   $('bypassEffects').onclick = () => api.setBypass(!api.state().bypass);
@@ -232,7 +234,7 @@ export async function mountSplatitude(api) {
     if (state.look !== lookId && LOOKS.some(look => look.id === state.look)) {
       lookId = state.look; prefs.write('look', lookId); renderLook(LOOKS.find(look => look.id === lookId));
     }
-    if (state.mix !== lastState?.mix) prefs.write('mix', state.mix);
+    if (state.mix !== persistedMix) persistMix(state.mix);
     if (lastState?.live && !state.live) notify('System audio disconnected.');
     if (state.asset && !state.loading && state.asset !== lastState?.asset && !busy && state.asset !== (names[selected?.id] || selected?.name)) {
       selected = null; homeView = api.getView(); cameraDirector.setAsset(null); liveControls.reset(); navigation.setMode('orbit'); $('enterSpace').textContent = '⌂ Reset view'; $('sceneTitle').textContent = state.asset;

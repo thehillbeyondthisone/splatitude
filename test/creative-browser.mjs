@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { waitForRendered } from './render-evidence.mjs';
 const base = process.env.SPLATITUDE_URL || 'http://127.0.0.1:8770';
 const { assets } = await (await fetch(`${base}/api/library`)).json();
@@ -96,6 +96,7 @@ try {
   await page.locator(`[data-asset="${assets[0].id}"]`).click(); await loaded();
   assert.equal(await page.locator('#angleCount').textContent(), '2 / 4');
   await slider('#lowMix', 1.35); await slider('#midMix', 0.7); await slider('#highMix', 1.6);
+  await slider('#masterIntensity', 1.27);
   await page.locator('[data-look="liquid"]').click();
   const presetView = await view();
   const download = page.waitForEvent('download'); await page.locator('#saveSession').click();
@@ -106,6 +107,16 @@ try {
   assert.equal(await page.locator('#lookNote').textContent(), 'Slow, rolling waves');
   assert.deepEqual(await page.evaluate(() => __splatitude.state().bands), { low: 1.35, mid: 0.7, high: 1.6 });
   assert(distance((await view()).position, presetView.position) < 0.002, 'preset restores the interior camera');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('splatitude.bands')).low === 1.35 && localStorage.getItem('splatitude.mix') === '1.27');
+  // Changing controls and reopening a preset within one UI refresh must still
+  // replace the saved settings, even when the restored values equal the last frame.
+  await page.evaluate(preset => {
+    for (const id of ['lowMix', 'masterIntensity']) {
+      const input = document.getElementById(id); input.value = 0; input.dispatchEvent(new Event('input'));
+    }
+    __bench.applyPreset(preset);
+  }, JSON.parse(await readFile('verification/creative-session.json', 'utf8')));
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('splatitude.bands')).low === 1.35 && localStorage.getItem('splatitude.mix') === '1.27');
   await page.locator('#present').click(); await page.keyboard.press('m'); await page.keyboard.down('b');
   await page.waitForTimeout(150); assert((await page.locator('#performanceHud').textContent()).includes('FROZEN'));
   await page.keyboard.up('b'); await page.keyboard.press('m'); await page.keyboard.press('Escape');
@@ -113,15 +124,18 @@ try {
   assert(await page.locator('#masterIntensity').isVisible()); await page.screenshot({ path: 'verification/creative-laptop.png' });
   await page.setViewportSize({ width: 390, height: 844 }); await page.locator('#cameraToggle').click();
   assert(await page.locator('#cameraPanel').isVisible()); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  await page.screenshot({ path: 'verification/creative-mobile.png', fullPage: true });
+  // Capture the actual phone viewport; a full-page shot resizes the live WebGL
+  // canvas during capture and can stall Chrome's compositor on larger scans.
+  await page.screenshot({ path: 'verification/creative-mobile.png' });
   await page.locator('#closeCamera').click(); await page.locator('#connectAudio').click(); await page.evaluate(() => __tone.context.close());
   await page.goto(`${base}/?debug=1&scene=${assets[0].id}`); await loaded();
   assert.equal(await page.locator('#angleCount').textContent(), '2 / 4');
   assert.equal(await page.locator('.angleCard input').first().inputValue(), 'Doorway');
   assert.deepEqual(await page.evaluate(() => __splatitude.state().bands), { low: 1.35, mid: 0.7, high: 1.6 });
   assert.equal(await page.evaluate(() => __splatitude.state().look), 'liquid');
+  assert.equal(await page.evaluate(() => __splatitude.state().mix), 1.27);
   await waitForRendered(page);
-  checks.push('Angles persist per scan and after reload; band mix round-trips in presets; fullscreen shortcuts and responsive panels work');
+  checks.push('Angles persist per scan and after reload; rapid preset loads save frequency mix and intensity; fullscreen shortcuts and responsive panels work');
   assert.deepEqual({ errors, external }, { errors: [], external: [] });
   await writeFile('verification/creative-report.json', JSON.stringify({ checks, errors, external, captureTest: 'Synthetic audio stream; native system picker remains manual' }, null, 2));
   console.log('PASS: ' + checks.join('; '));
