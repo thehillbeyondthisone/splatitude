@@ -38,7 +38,9 @@ You can also open a `.ply`, `.splat`, `.spz`, `.sog`, or `.ksplat` file, or plac
 }
 ```
 
-`shareCoordinates` rotates a SHARE Z-up export into the viewer’s Y-up space. Rename a library card to give it a friendly name. **Save view** remembers a camera separately for each scan; **Home view** restores it. Names, views, previews, the last selected scan, and performance settings are saved in this browser’s local storage.
+`shareCoordinates` rotates a SHARE Z-up export into the viewer’s Y-up space. SHARE scans open inside, at the original capture camera, with a wider field of view and **Walk** navigation. Drag the scene to look around; use **WASD** or **arrow keys** to move, **Q / E** to lower or raise the camera, **Shift** to move faster, and the mouse wheel to move forward or backward. Touch screens have movement arrows. The music controls stay clickable while walking. **Orbit** restores drag-to-orbit, right-drag-to-pan, and wheel-to-zoom navigation.
+
+**Enter space** (or **R** in Walk mode) always returns to the interior starting point, even if you have saved a view outside. Rename a library card to give it a friendly name. **Save view** remembers a camera separately for each scan; **Saved view** restores it. Names, views, previews, the last selected scan, and performance settings are saved in this browser’s local storage. Camera views saved before interior navigation was introduced are reset once so an old outside camera cannot strand you again.
 
 ## Bring the music
 
@@ -58,6 +60,7 @@ You can also open an audio track. File playback starts once analysis finishes. *
 npm run dev          # restart the local server on source changes
 npm test             # completed-export filtering and byte-range tests
 npm run test:browser # local integration test with two real completed scans
+npm run test:navigation # interior camera, walking, reset, touch and live switching
 ```
 
 The browser test uses installed Chrome and generated audio MediaStreams. It checks real scan rendering, switching during live audio, frequency response, looks, original comparison, camera persistence, mobile layout, preset round trips, and a short 720p MP4 export while blocking external HTTP requests. Native desktop-audio selection remains a manual permission step. Evidence goes to ignored `verification/`.

@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { visibleFraction as renderedFraction } from './render-evidence.mjs';
 const base = process.env.SPLATITUDE_URL || 'http://127.0.0.1:8770';
 await mkdir('verification', { recursive: true });
 const catalog = await (await fetch(`${base}/api/library`)).json();
@@ -30,14 +31,7 @@ await page.addInitScript(() => {
   };
 });
 async function visibleFraction() {
-  return page.evaluate(async () => {
-    await __bench.settled();
-    __bench.pushUniforms(); __bench.pushCameraUniform(); __bench.updateShaderUniforms(); __bench.updateOptics(); __bench.renderWithPost();
-    const gl = __bench.renderer.getContext(), w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
-    const data = new Uint8Array(w * h * 4); gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data);
-    let n = 0; for (let i = 0; i < data.length; i += 4) if (data[i] + data[i + 1] + data[i + 2] > 70) n++;
-    return n / (w * h);
-  });
+  return renderedFraction(page);
 }
 function wave() {
   const rate = 24000, samples = rate * 3, wav = Buffer.alloc(44 + samples * 2);

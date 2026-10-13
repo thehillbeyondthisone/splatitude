@@ -9,6 +9,8 @@ if (!match) throw new Error('Missing upstream engine');
 let engine = match[1].replace('./live-audio.mjs', './live-audio.mjs');
 engine = engine.replaceAll('`gausseous-', '`splatitude-');
 engine = `import { mountSplatitude } from './app.mjs';\n` + engine;
+engine = engine.replace('const controls = new OrbitControls', 'let performanceNavigation = "orbit";\nconst controls = new OrbitControls');
+engine = engine.replace('controls.enabled = !gestureOn && !draggingGizmo && !pickOn;', 'controls.enabled = performanceNavigation !== "walk" && !gestureOn && !draggingGizmo && !pickOn;');
 engine = engine.replace('let liveAudio = null;', 'let liveAudio = null;\nlet performanceMix = 1, performanceBypass = false, performanceLook = "pulse", splatLoading = false;\nlet performanceIds = new Set();');
 engine = engine.replace('a.depth * (hi - lo)', 'a.depth * performanceMix * (hi - lo)');
 engine = engine.replace('    V[id] = v;', '    V[id] = performanceBypass && !NO_ANIM.has(id) && !id.startsWith("ob") && id !== "ease" ? Number(DEFAULT[id]) : v;');
@@ -25,7 +27,7 @@ engine = engine.replace('if (rendering) { setStatus("Wait for the video export t
 engine = engine.replace('    $("audBassNoise").click();', '    liveAudio.startedAt = performance.now() / 1000;\n    // Keep the selected performance look and its routes when connecting.');
 engine = engine.replace('    asset: assetLabel,', '    performance: { mix: performanceMix, bypass: performanceBypass, look: performanceLook },\n    asset: assetLabel,');
 engine = engine.replace('  applyPreset.migrationNotes = [];', '  if (Number.isFinite(o?.performance?.mix)) performanceMix = clampNum(o.performance.mix, 0, 2);\n  performanceBypass = o?.performance?.bypass === true;\n  if (typeof o?.performance?.look === "string") performanceLook = o.performance.look;\n  applyPreset.migrationNotes = [];');
-engine = engine.replace('  const code = e.code;\n\n  if (code === "Escape")', '  const code = e.code;\n  if (!document.body.classList.contains("advanced") && /^Digit[1-6]$/.test(code)) return;\n\n  if (code === "Escape")');
+engine = engine.replace('  const code = e.code;\n\n  if (code === "Escape")', '  const code = e.code;\n  if (performanceNavigation === "walk" && /^(Key[WASDQER]|Arrow(Up|Down|Left|Right))$/.test(code)) return;\n  if (!document.body.classList.contains("advanced") && /^Digit[1-6]$/.test(code)) return;\n\n  if (code === "Escape")');
 const auto = 'if (new URLSearchParams(location.search).get("studio") === "1") {\n  loadSplat("/studio.ply", "Martial Arts Studio — SHARE 30");\n}';
 if (!engine.includes(auto)) throw new Error('Missing expected startup hook');
 engine = engine.replace(auto, await readFile('src/bridge.fragment.txt', 'utf8'));

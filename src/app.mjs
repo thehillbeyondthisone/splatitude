@@ -1,4 +1,5 @@
 import { LOOKS, CONTROLLED_IDS, FEELS } from './looks.mjs';
+import { mountNavigation } from './navigation.mjs';
 
 const $ = id => document.getElementById(id);
 const prefs = {
@@ -11,10 +12,11 @@ const fmtSize = bytes => `${Math.round(bytes / 1024 / 1024)} MB`;
 export async function mountSplatitude(api) {
   // Keep the scene before its controls when the narrow layout becomes a document.
   $('performancePanel').before($('stage'));
+  const navigation = mountNavigation(api);
   let library = [], selected = null, busy = false, toastTimer, lastFile = null;
   let lookId = prefs.read('look', 'pulse'), feelId = prefs.read('feel', 'balanced');
   let homeView = null, lastState = null;
-  const names = prefs.read('names', {}), views = prefs.read('views', {}), thumbnails = prefs.read('thumbnails', {});
+  const names = prefs.read('names', {}), views = prefs.read('views.v2', {}), thumbnails = prefs.read('thumbnails', {});
   if (!FEELS[feelId]) feelId = 'balanced';
   if (!LOOKS.some(look => look.id === lookId)) lookId = 'pulse';
   const notify = (message, error = false) => {
@@ -87,6 +89,8 @@ export async function mountSplatitude(api) {
       const loaded = await api.loadSplat(asset.url, names[asset.id] || asset.name, asset);
       if (!loaded) throw new Error(api.state().status || 'Could not load that splat.');
       selected = asset; homeView = api.getView();
+      $('enterSpace').textContent = asset.shareCoordinates ? '⌂ Enter space' : '⌂ Reset view';
+      navigation.setMode(asset.shareCoordinates && !document.body.classList.contains('advanced') ? 'walk' : 'orbit');
       document.body.classList.remove('library-open'); $('mobileLibrary').setAttribute('aria-expanded', 'false');
       if (views[asset.id]) api.setView(views[asset.id]);
       prefs.write('selected', asset.id);
@@ -137,9 +141,13 @@ export async function mountSplatitude(api) {
   $('saveSession').onclick = () => api.savePreset();
   $('openSession').onclick = () => api.openPreset();
   $('homeView').onclick = () => { if (selected) api.setView(views[selected.id] || homeView); else if (homeView) api.setView(homeView); };
+  $('enterSpace').onclick = () => {
+    navigation.setMode('walk'); if (homeView) api.setView(homeView);
+    notify('Back inside. Drag to look; WASD or arrows to move.');
+  };
   $('saveView').onclick = () => {
     if (!selected) { notify('Choose a library splat first.'); return; }
-    views[selected.id] = api.getView(); prefs.write('views', views); notify('Home view saved for this space.');
+    views[selected.id] = api.getView(); prefs.write('views.v2', views); notify('View saved for this space.');
   };
   $('masterIntensity').value = number(prefs.read('mix', 1), 0, 2, 1);
   $('liveSensitivity').value = number(prefs.read('sensitivity', 2), 0.25, 8, 2);
@@ -157,6 +165,7 @@ export async function mountSplatitude(api) {
   $('advancedToggle').onclick = () => {
     const active = document.body.classList.toggle('advanced');
     $('advancedToggle').setAttribute('aria-pressed', active); api.resize();
+    navigation.setMode(active ? 'orbit' : selected?.shareCoordinates ? 'walk' : 'orbit');
     if (active) { document.querySelector('[data-group="audio"]').open = true; $('rail').scrollTop = 0; }
   };
   function present(on) { document.body.classList.toggle('performing', on); document.body.classList.remove('hud-hidden'); api.resize(); }
@@ -214,7 +223,7 @@ export async function mountSplatitude(api) {
     }
     if (lastState?.live && !state.live) notify('System audio disconnected.');
     if (state.asset && !state.loading && state.asset !== lastState?.asset && !busy && state.asset !== (names[selected?.id] || selected?.name)) {
-      selected = null; homeView = api.getView(); $('sceneTitle').textContent = state.asset;
+      selected = null; homeView = api.getView(); navigation.setMode('orbit'); $('enterSpace').textContent = '⌂ Reset view'; $('sceneTitle').textContent = state.asset;
       $('sceneInfo').textContent = `${state.splats} splats · local file`; renderLibrary();
     }
     lastState = state; drawSpectrum(state);

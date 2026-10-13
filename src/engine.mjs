@@ -890,6 +890,7 @@ applyFilmProfile();
    frame index for the determinism reason explained there. */
 let grainFrame = 0;
 
+let performanceNavigation = "orbit";
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
@@ -913,7 +914,7 @@ xctl.getHelper().visible = false;
    Go A / Go B got clobbered earlier in this file; route both through here. */
 let draggingGizmo = false;
 function syncControlsEnabled() {
-  controls.enabled = !gestureOn && !draggingGizmo && !pickOn;
+  controls.enabled = performanceNavigation !== "walk" && !gestureOn && !draggingGizmo && !pickOn;
 }
 xctl.addEventListener("dragging-changed", (e) => {
   draggingGizmo = e.value;
@@ -5304,6 +5305,7 @@ addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;          // Cmd/Ctrl+A still selects text
 
   const code = e.code;
+  if (performanceNavigation === "walk" && /^(Key[WASDQER]|Arrow(Up|Down|Left|Right))$/.test(code)) return;
   if (!document.body.classList.contains("advanced") && /^Digit[1-6]$/.test(code)) return;
 
   if (code === "Escape") {
@@ -5381,16 +5383,27 @@ showDpr();
 $("t-state").textContent = "idle";
 setStatus("No splat loaded — drop a file on the viewport.");
 requestAnimationFrame(frame);
+const validView = view => [view?.position, view?.target].every(v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite));
+function setPerformanceView(view) {
+  if (!validView(view)) return;
+  setCamMode('manual');
+  // Flush the previous orbit's damping before teleporting to another pose.
+  const damping = controls.enableDamping; controls.enableDamping = false; controls.update();
+  camera.position.fromArray(view.position); controls.target.fromArray(view.target);
+  camera.near = 0.02;
+  if (Number.isFinite(view.fov)) camera.fov = clampNum(view.fov, 30, 100);
+  camera.updateProjectionMatrix(); controls.update(); controls.enableDamping = damping;
+}
 function setShareHome(options) {
   xform = { ...XFORM_DEFAULT, rotX: -90 };
   applyXform(); refreshModelUI(); setCamMode('manual');
-  if ([options.view?.position, options.view?.target].every(v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite))) {
-    camera.position.fromArray(options.view.position); controls.target.fromArray(options.view.target);
-  } else if (options.firstCamera?.length === 4) {
+  if (validView(options.view)) {
+    setPerformanceView({ fov: 70, ...options.view });
+  } else if (options.firstCamera?.length === 4 && options.firstCamera.every(row => Array.isArray(row) && row.length === 4 && row.every(Number.isFinite))) {
     const m = options.firstCamera;
-    camera.position.set(m[0][3], m[2][3], -m[1][3]);
+    const position = new THREE.Vector3(m[0][3], m[2][3], -m[1][3]);
     const direction = new THREE.Vector3(-m[0][2], -m[2][2], m[1][2]).normalize();
-    controls.target.copy(camera.position).addScaledVector(direction, Math.max(1, radius * 0.15));
+    setPerformanceView({ position: position.toArray(), target: position.clone().addScaledVector(direction, 2).toArray(), fov: 70 });
   } else {
     reframe();
   }
@@ -5405,10 +5418,32 @@ const engineAPI = {
   openPreset: () => $('presetFile').click(),
   play: () => $('play').click(),
   home: setShareHome,
-  getView: () => ({ position: camera.position.toArray(), target: controls.target.toArray() }),
-  setView(view) {
-    if (![view?.position, view?.target].every(v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite))) return;
-    setCamMode('manual'); camera.position.fromArray(view.position); controls.target.fromArray(view.target); controls.update();
+  getView: () => ({ position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov }),
+  setView: setPerformanceView,
+  setNavigation(mode) {
+    controls.enableDamping = false; controls.update();
+    performanceNavigation = mode === 'walk' ? 'walk' : 'orbit';
+    controls.enableDamping = performanceNavigation === 'orbit';
+    if (performanceNavigation === 'walk') {
+      if (correcting) leaveCorrect();
+      enterMode('orbit'); setCamMode('manual');
+    }
+    syncControlsEnabled();
+  },
+  look(yaw, pitch) {
+    if (!mesh || splatLoading || rendering || performanceNavigation !== 'walk') return;
+    const rotation = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+    rotation.y += yaw; rotation.x = clampNum(rotation.x + pitch, -1.45, 1.45); rotation.z = 0;
+    camera.quaternion.setFromEuler(rotation);
+    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    controls.target.copy(camera.position).addScaledVector(direction, 2); controls.update();
+  },
+  move(forward, right, up) {
+    if (!mesh || splatLoading || rendering || performanceNavigation !== 'walk') return;
+    const ahead = camera.getWorldDirection(new THREE.Vector3()); ahead.y = 0; ahead.normalize();
+    const sideways = ahead.clone().cross(camera.up).normalize();
+    const delta = ahead.multiplyScalar(forward).addScaledVector(sideways, right); delta.y = up;
+    camera.position.add(delta); controls.target.add(delta); controls.update();
   },
   setSensitivity(value) { $('audSensitivity').value = value; if (liveAudio) liveAudio.sensitivity = value; },
   setMix(value) { performanceMix = clampNum(value, 0, 2); pushUniforms(); },
@@ -5430,7 +5465,7 @@ const engineAPI = {
     hasAudio: !!audioEnv, audioName, audioDur, playing, levels: { ...audioLevel },
     spectrum: liveAudio?.spectrum, liveAudio, splats: $('t-splats').textContent, fps: $('t-fps').textContent,
     error: $('t-state').textContent === 'error', status: $('status').textContent,
-    mix: performanceMix, bypass: performanceBypass, look: performanceLook, asset: assetLabel }),
+    mix: performanceMix, bypass: performanceBypass, look: performanceLook, navigation: performanceNavigation, asset: assetLabel }),
   async thumbnail() {
     await spark.update({ scene, camera });
     pushUniforms(); controls.update(); pushCameraUniform(); updateShaderUniforms(); updateOptics(); renderWithPost();

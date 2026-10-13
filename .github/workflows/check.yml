@@ -11,4 +11,4 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
-      - run: node --check src/engine.mjs && node --check src/app.mjs
+      - run: node --check src/engine.mjs && node --check src/app.mjs && node --check src/navigation.mjs

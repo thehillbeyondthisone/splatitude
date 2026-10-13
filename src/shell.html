@@ -14,7 +14,9 @@
   <div class="libraryFooter"><span class="tinyMark">S</span><div>Made for wandering.<br><span class="muted">Drag to orbit · scroll to explore</span></div></div>
 </aside>
 <div id="sceneCaption"><span class="eyebrow" id="sceneCategory">YOUR CURRENT SPACE</span><h1 id="sceneTitle">Pick a place to begin</h1><p id="sceneInfo">Your scan stays on this computer.</p></div>
-<div id="sceneTools"><button id="homeView" title="Restore this splat's saved view">⌂ <span>Home view</span></button><button id="saveView" title="Remember the current camera for this splat">Save view</button><button id="present" title="Hide controls for a performance (H)">↗ <span>Perform</span></button></div>
+<div id="navigationHint">Drag to look · WASD / arrows to move</div>
+<div id="sceneTools"><button id="enterSpace" title="Return to the interior starting point, even if a saved view is outside">⌂ Enter space</button><div class="navigationModes" aria-label="Navigation mode"><button data-navigation="walk" aria-pressed="false">Walk</button><button data-navigation="orbit" aria-pressed="true">Orbit</button></div><button id="homeView" title="Restore your saved view">Saved view</button><button id="saveView" title="Remember the current camera for this splat">Save view</button><button id="present" title="Hide controls for a performance (H)">↗ <span>Perform</span></button></div>
+<div id="walkPad" aria-label="Walk through the space"><button data-walk="KeyW" aria-label="Move forward">↑</button><button data-walk="KeyA" aria-label="Move left">←</button><button data-walk="KeyS" aria-label="Move backward">↓</button><button data-walk="KeyD" aria-label="Move right">→</button></div>
 <button id="exitPerformance">← Back to controls</button>
 <aside id="performancePanel" aria-label="Music and effects">
   <div class="performanceScroll">
