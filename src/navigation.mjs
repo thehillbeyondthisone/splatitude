@@ -9,6 +9,7 @@ export function mountNavigation(api) {
   const active = () => mode === 'walk' && !document.body.classList.contains('advanced') && !api.state().loading && !api.state().rendering && !!api.state().asset;
   function clear() { keys.clear(); fast = false; drag = null; }
   function setMode(value) {
+    dispatchEvent(new Event('splatitude-camera-input'));
     clear(); mode = value === 'walk' ? 'walk' : 'orbit';
     if (mode === 'walk' && document.body.classList.contains('advanced')) {
       document.body.classList.remove('advanced');

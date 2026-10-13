@@ -1745,6 +1745,7 @@ const ENV_RATE = 200;                 // envelope samples per second
 let audioLoop = false;
 let liveAudio = null;
 let performanceMix = 1, performanceBypass = false, performanceLook = "pulse", splatLoading = false;
+let performanceBands = { low: 1, mid: 1, high: 1 }, performanceBoost = 1, performanceFrozen = null;
 let performanceIds = new Set();
 
 const AUD = {};                       // id -> { band, depth, attack, release, lag, gain, floor, curve }
@@ -1970,9 +1971,10 @@ function evalParams() {
     if (a && a.band && a.depth && !NO_ANIM.has(id)) {
       const el = $("p-" + id);
       const lo = parseFloat(el.min), hi = parseFloat(el.max);
-      v = clampNum(v + a.depth * performanceMix * (hi - lo) * routeLevel(id, seconds), lo, hi);
+      v = clampNum(v + a.depth * performanceMix * performanceBoost * (performanceBands[a.band] ?? 1) * (hi - lo) * routeLevel(id, seconds), lo, hi);
     }
-    V[id] = performanceBypass && !NO_ANIM.has(id) && !id.startsWith("ob") && id !== "ease" ? Number(DEFAULT[id]) : v;
+    const visual = !NO_ANIM.has(id) && !id.startsWith("ob") && id !== "ease";
+    V[id] = performanceBypass && visual ? Number(DEFAULT[id]) : performanceFrozen && visual ? (performanceFrozen.values[id] ?? v) : v;
   }
 }
 
@@ -2682,7 +2684,7 @@ for (const [id, mode] of [["gizMove", "translate"], ["gizRotate", "rotate"], ["g
    any capture. Never feed a raw slider value into a world-space uniform. */
 function pushUniforms() {
   evalParams();
-  U.time.value    = liveAudio?.active ? (performance.now() / 1000 - liveAudio.startedAt) : playhead * V.dur;
+  U.time.value    = performanceFrozen?.time ?? (liveAudio?.active ? (performance.now() / 1000 - liveAudio.startedAt) : playhead * V.dur);
   U.cullA.value   = V.cullA;
   U.cullS.value   = cullSize(V.cullS) * radius;
   U.sizeMul.value = V.scale;
@@ -3863,7 +3865,7 @@ function frame(now) {
   updateDofFocus();
   updateShaderUniforms();
   updateOptics();
-  postMat.uniforms.seed.value = grainFrame;
+  postMat.uniforms.seed.value = performanceFrozen?.grain ?? grainFrame;
   grainFrame = (grainFrame + 1) % 4096;
   renderWithPost();
 }
@@ -4054,7 +4056,7 @@ $("render").onclick = async () => {
          advancing on whatever the live view happens to be doing during an
          export and reading it here would make the exported grain depend on
          real time, not on which frame is being encoded. */
-      postMat.uniforms.seed.value = i % 4096;
+      postMat.uniforms.seed.value = performanceFrozen?.grain ?? (i % 4096);
 
       /* Spark sorts splats asynchronously off a GPU readback, so a frame
          rendered straight after a camera move can blend in stale order.
@@ -4160,7 +4162,7 @@ function serialize() {
     format: PRESET_FORMAT,
     version: PRESET_VERSION,
     saved: new Date().toISOString(),
-    performance: { mix: performanceMix, bypass: performanceBypass, look: performanceLook },
+    performance: { mix: performanceMix, bypass: performanceBypass, look: performanceLook, bands: { ...performanceBands }, view: { position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov } },
     asset: assetLabel,                            // provenance only, never auto-loaded
     params: Object.fromEntries(SPEC.map(([id]) => [id, P[id]])),
     toggles: Object.fromEntries(TOGGLES.map((id) => [id, $(id).checked])),
@@ -4214,8 +4216,12 @@ function serialize() {
    current value, and every number is clamped to its control's own range.
    A preset is a plain text file a user may well have hand-edited. */
 function applyPreset(o) {
+  dispatchEvent(new Event("splatitude-camera-input"));
+  const previousPerformanceView = { position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov };
   if (Number.isFinite(o?.performance?.mix)) performanceMix = clampNum(o.performance.mix, 0, 2);
   performanceBypass = o?.performance?.bypass === true;
+  performanceFrozen = null; performanceBoost = 1;
+  for (const band of ["low", "mid", "high"]) performanceBands[band] = Number.isFinite(o?.performance?.bands?.[band]) ? clampNum(o.performance.bands[band], 0, 2) : 1;
   if (typeof o?.performance?.look === "string") performanceLook = o.performance.look;
   applyPreset.migrationNotes = [];       // readPreset() reads this after return
   if (!o || (o.format !== PRESET_FORMAT && o.format !== PRESET_FORMAT_LEGACY)) throw new Error("not a Gausseous preset");
@@ -4479,6 +4485,7 @@ function applyPreset(o) {
   applyXform();
   refreshModelUI();
   reframe();
+  if (modeIn === "manual") setPerformanceView(validView(o.performance?.view) ? o.performance.view : previousPerformanceView);
 
   /* --- v5 -> v6 migration: depth of field re-expressed -------------------
      `dofAperture` (degrees, 0..30) became `dof` (0..100, inverted, shaped),
@@ -5420,6 +5427,16 @@ const engineAPI = {
   home: setShareHome,
   getView: () => ({ position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov }),
   setView: setPerformanceView,
+  blendView(from, to, t) {
+    if (!validView(from) || !validView(to) || splatLoading || rendering) return;
+    const a = new THREE.Vector3().fromArray(from.position), b = new THREE.Vector3().fromArray(to.position);
+    const rotation = view => new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(
+      new THREE.Vector3().fromArray(view.position), new THREE.Vector3().fromArray(view.target), new THREE.Vector3(0, 1, 0)));
+    camera.position.lerpVectors(a, b, t); camera.quaternion.copy(rotation(from)).slerp(rotation(to), t);
+    controls.target.copy(camera.position).addScaledVector(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion), 2);
+    camera.fov = (from.fov || 70) + ((to.fov || 70) - (from.fov || 70)) * t;
+    camera.updateProjectionMatrix(); controls.update();
+  },
   setNavigation(mode) {
     controls.enableDamping = false; controls.update();
     performanceNavigation = mode === 'walk' ? 'walk' : 'orbit';
@@ -5447,8 +5464,18 @@ const engineAPI = {
   },
   setSensitivity(value) { $('audSensitivity').value = value; if (liveAudio) liveAudio.sensitivity = value; },
   setMix(value) { performanceMix = clampNum(value, 0, 2); pushUniforms(); },
+  setBands(values) {
+    for (const band of ['low', 'mid', 'high']) if (Number.isFinite(values[band])) performanceBands[band] = clampNum(values[band], 0, 2);
+    pushUniforms();
+  },
+  setBoost(on) { if (on && (rendering || splatLoading)) return; performanceBoost = on ? 1.8 : 1; pushUniforms(); },
+  setFrozen(on) {
+    if (rendering || splatLoading) return;
+    performanceFrozen = on ? { values: { ...V }, time: U.time.value, grain: grainFrame } : null; pushUniforms();
+  },
   setBypass(value) { performanceBypass = !!value; pushUniforms(); },
   applyLook(look, controlledIds, feel) {
+    performanceFrozen = null;
     performanceLook = look.id; performanceBypass = false; performanceIds = new Set(controlledIds);
     for (const id of controlledIds) { setParam(id, Number(DEFAULT[id])); if (ENV[id]) ENV[id].on = false; }
     for (const id of Object.keys(AUD)) delete AUD[id];
@@ -5465,9 +5492,12 @@ const engineAPI = {
     hasAudio: !!audioEnv, audioName, audioDur, playing, levels: { ...audioLevel },
     spectrum: liveAudio?.spectrum, liveAudio, splats: $('t-splats').textContent, fps: $('t-fps').textContent,
     error: $('t-state').textContent === 'error', status: $('status').textContent,
-    mix: performanceMix, bypass: performanceBypass, look: performanceLook, navigation: performanceNavigation, asset: assetLabel }),
+    mix: performanceMix, bypass: performanceBypass, look: performanceLook, navigation: performanceNavigation, asset: assetLabel,
+    bands: { ...performanceBands }, boosted: performanceBoost > 1, frozen: !!performanceFrozen }),
   async thumbnail() {
+    if (rendering || splatLoading) throw new Error('Scene is busy');
     await spark.update({ scene, camera });
+    if (rendering || splatLoading) throw new Error('Scene is busy');
     pushUniforms(); controls.update(); pushCameraUniform(); updateShaderUniforms(); updateOptics(); renderWithPost();
     const canvas = document.createElement('canvas'); canvas.width = 400; canvas.height = 240;
     canvas.getContext('2d').drawImage(renderer.domElement, 0, 0, canvas.width, canvas.height);

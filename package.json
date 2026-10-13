@@ -11,7 +11,8 @@
     "dev": "node --watch server.mjs",
     "test": "node --test test/*.test.mjs",
     "test:browser": "node test/browser.mjs",
-    "test:navigation": "node test/navigation-browser.mjs"
+    "test:navigation": "node test/navigation-browser.mjs",
+    "test:creative": "node test/creative-browser.mjs"
   },
   "dependencies": {
     "@sparkjsdev/spark": "2.1.0",

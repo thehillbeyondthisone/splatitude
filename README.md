@@ -42,17 +42,22 @@ You can also open a `.ply`, `.splat`, `.spz`, `.sog`, or `.ksplat` file, or plac
 
 **Enter space** (or **R** in Walk mode) always returns to the interior starting point, even if you have saved a view outside. Rename a library card to give it a friendly name. **Save view** remembers a camera separately for each scan; **Saved view** restores it. Names, views, previews, the last selected scan, and performance settings are saved in this browser’s local storage. Camera views saved before interior navigation was introduced are reset once so an old outside camera cannot strand you again.
 
+Open **Camera** to save up to four named angles with real previews for each space. Click an angle or press **7, 8, 9, 0** to glide back to it. Save two angles to enable **Tour** (**T**), then set the seconds per angle for a looping route. **Drift** (**G**) gently looks around from your current position, keeping you inside. Drag, scroll, move, or press **Escape** to take over immediately. Camera angles stay in this browser; offline MP4 camera paths use the Advanced editor’s keyframes.
+
 ## Bring the music
 
 Click **Use system audio**. In the browser picker select **Entire screen**, enable **Share system audio**, and click **Share**. Music keeps playing through its original output. The app analyses the stream without replaying it through the speakers; it disables the video track and does not record or upload the screen. The browser requires a fresh selection each session.
 
 Five sound-reactive looks—**Pulse, Liquid, Prism, Drift, Echo**—plus **Original** are ready to use. Switch looks with **1–6**, adjust **Intensity** and **Sensitivity**, and choose **Tight**, **Balanced**, or **Float** for the response. **A/B original** lets you compare with the untouched scan. Live motion and audio response work with the timeline paused, including while you switch scans.
 
+**Mix the frequencies** adjusts how much bass, mid, and treble drive the effects. It changes the visual response while your music keeps its original sound. **Freeze** (**M**) holds the current effects while audio analysis and camera navigation continue; choosing another look releases it. Hold **Boost** (**B**) for a stronger response, then release to return to your normal intensity. Frequency mixes are included in saved presets. Freeze and Boost are live controls and reset when you change scans or load a preset.
+
 **Perform** or **H** hides the controls; **Escape** brings them back. Fullscreen is available in the footer. Keep the browser tab visible for smooth rendering.
+Camera shortcuts, Freeze, and Boost also work during Perform, with a small status display in the corner.
 
 You can also open an audio track. File playback starts once analysis finishes. **Advanced editor** exposes Gausseous’s parameter routing, envelopes, masks, camera keyframes, transformations, and video output. File-driven sessions can export MP4; live input must be disconnected for offline export. Use a screen recorder to capture a live performance.
 
-**Save preset** writes the visual settings and routing as JSON. Reopen the splat and audio source before loading the preset. Presets reference media; they do not embed it. Existing Gausseous presets remain supported.
+**Save preset** writes the visual settings, routing, frequency mix, and current manual camera view as JSON. Reopen the splat and audio source before loading the preset. Presets reference media; they do not embed it. Existing Gausseous presets remain supported; older manual presets keep your current camera rather than moving it outside.
 
 ## Development and checks
 
@@ -61,6 +66,7 @@ npm run dev          # restart the local server on source changes
 npm test             # completed-export filtering and byte-range tests
 npm run test:browser # local integration test with two real completed scans
 npm run test:navigation # interior camera, walking, reset, touch and live switching
+npm run test:creative # live pads, frequency mix, angle persistence and camera tours
 ```
 
 The browser test uses installed Chrome and generated audio MediaStreams. It checks real scan rendering, switching during live audio, frequency response, looks, original comparison, camera persistence, mobile layout, preset round trips, and a short 720p MP4 export while blocking external HTTP requests. Native desktop-audio selection remains a manual permission step. Evidence goes to ignored `verification/`.

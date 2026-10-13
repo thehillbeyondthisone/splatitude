@@ -465,6 +465,16 @@
   <div class="libraryFooter"><span class="tinyMark">S</span><div>Made for wandering.<br><span class="muted">Drag to orbit · scroll to explore</span></div></div>
 </aside>
 <div id="sceneCaption"><span class="eyebrow" id="sceneCategory">YOUR CURRENT SPACE</span><h1 id="sceneTitle">Pick a place to begin</h1><p id="sceneInfo">Your scan stays on this computer.</p></div>
+<button id="cameraToggle" aria-expanded="false" aria-controls="cameraPanel">◉ Camera</button>
+<section id="cameraPanel" aria-label="Camera angles and tours" hidden>
+  <div class="sectionEyebrow">THE CAMERA <button id="closeCamera" aria-label="Close camera controls">×</button></div>
+  <h2>Find another angle.</h2><p class="finePrint">Drift in place, or build a tour from your favorite views.</p>
+  <div class="cameraMotion"><button id="driftCamera" aria-pressed="false">≈ Drift <kbd>G</kbd></button><button id="tourCamera" aria-pressed="false">↝ Tour <kbd>T</kbd></button><button id="stopCamera" aria-label="Stop camera motion">■</button></div>
+  <div class="masterRow"><label for="tourDuration">Tour pace</label><output id="tourDurationValue">10s / angle</output></div><input id="tourDuration" class="wideSlider" type="range" min="4" max="30" step="1" value="10">
+  <p id="cameraStatus" class="finePrint" role="status">Manual camera · your move</p>
+  <div class="angleHeading"><span class="sectionEyebrow">YOUR ANGLES <span id="angleCount">0 / 4</span></span><button id="saveAngle">＋ Save angle</button></div>
+  <div id="angleList"></div><p class="finePrint cameraFootnote">Keys 7–0 recall angles. Drag or move to take over. Angles stay with each space.</p>
+</section>
 <div id="navigationHint">Drag to look · WASD / arrows to move</div>
 <div id="sceneTools"><button id="enterSpace" title="Return to the interior starting point, even if a saved view is outside">⌂ Enter space</button><div class="navigationModes" aria-label="Navigation mode"><button data-navigation="walk" aria-pressed="false">Walk</button><button data-navigation="orbit" aria-pressed="true">Orbit</button></div><button id="homeView" title="Restore your saved view">Saved view</button><button id="saveView" title="Remember the current camera for this splat">Save view</button><button id="present" title="Hide controls for a performance (H)">↗ <span>Perform</span></button></div>
 <div id="walkPad" aria-label="Walk through the space"><button data-walk="KeyW" aria-label="Move forward">↑</button><button data-walk="KeyA" aria-label="Move left">←</button><button data-walk="KeyS" aria-label="Move backward">↓</button><button data-walk="KeyD" aria-label="Move right">→</button></div>
@@ -482,6 +492,11 @@
     <div class="masterRow"><label for="liveSensitivity">Sensitivity</label><output id="sensitivityValue">2.0×</output></div>
     <input id="liveSensitivity" class="wideSlider" type="range" min="0.25" max="8" step="0.05" value="2" aria-label="Audio sensitivity">
     <p id="sourceName" class="sourceName" aria-live="polite">Waiting for sound</p>
+    <details id="bandMixer"><summary>Mix the frequencies <span>↗</span></summary><div class="bandMixRows">
+      <div><label for="lowMix">Bass</label><input id="lowMix" data-band-mix="low" type="range" min="0" max="2" step="0.05" value="1"><output id="lowMixValue">100%</output></div>
+      <div><label for="midMix">Mid</label><input id="midMix" data-band-mix="mid" type="range" min="0" max="2" step="0.05" value="1"><output id="midMixValue">100%</output></div>
+      <div><label for="highMix">Treble</label><input id="highMix" data-band-mix="high" type="range" min="0" max="2" step="0.05" value="1"><output id="highMixValue">100%</output></div>
+    </div><button id="resetBands">Reset frequency mix</button></details>
   </section>
   <section class="performanceSection">
     <div class="sectionEyebrow">02 / THE LOOK <span>LIVE SWITCHING</span></div>
@@ -496,6 +511,7 @@
     <input id="masterIntensity" class="wideSlider" type="range" min="0" max="2" step="0.01" value="1" aria-label="Effect intensity">
     <div class="rangeLabels"><span>SUBTLE</span><span>ALL IN</span></div>
     <div class="feelButtons" aria-label="Audio response"><button data-feel="tight">Tight</button><button data-feel="balanced" class="selected">Balanced</button><button data-feel="float">Float</button></div>
+    <div class="livePads"><button id="freezeVisuals" aria-pressed="false" title="Freeze visual effects while music and camera keep going">Freeze <kbd>M</kbd></button><button id="boostVisuals" aria-pressed="false" title="Hold to boost the music response">Boost <kbd>B</kbd></button></div>
     <div class="sessionButtons"><button id="saveSession">Save preset ↓</button><button id="openSession">Open preset ↑</button></div>
   </section>
 </aside>
@@ -505,6 +521,7 @@
   <div class="footerStats"><span id="performanceSplats">—</span><span id="performanceFps">—</span><button id="fullScreen" aria-label="Toggle fullscreen">⛶</button></div>
 </footer>
 <div id="toast" role="status" aria-live="polite"></div>
+<div id="performanceHud" aria-live="polite"></div>
 
 
 <div id="stage">

@@ -12,3 +12,4 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: node --check src/engine.mjs && node --check src/app.mjs && node --check src/navigation.mjs
+      - run: node --check src/performance.mjs && node --check src/camera-director.mjs

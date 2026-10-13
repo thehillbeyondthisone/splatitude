@@ -1,10 +1,12 @@
 import { LOOKS, CONTROLLED_IDS, FEELS } from './looks.mjs';
 import { mountNavigation } from './navigation.mjs';
+import { mountPerformance } from './performance.mjs';
+import { mountCameraDirector } from './camera-director.mjs';
 
 const $ = id => document.getElementById(id);
 const prefs = {
   read(key, fallback) { try { return JSON.parse(localStorage.getItem(`splatitude.${key}`)) ?? fallback; } catch { return fallback; } },
-  write(key, value) { try { localStorage.setItem(`splatitude.${key}`, JSON.stringify(value)); } catch { /* Private browsing or quota. */ } },
+  write(key, value) { try { localStorage.setItem(`splatitude.${key}`, JSON.stringify(value)); return true; } catch { return false; } },
 };
 const number = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback;
 const fmtSize = bytes => `${Math.round(bytes / 1024 / 1024)} MB`;
@@ -23,17 +25,21 @@ export async function mountSplatitude(api) {
     $('toast').textContent = message; $('toast').classList.toggle('error', error); $('toast').classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 5000);
   };
+  const liveControls = mountPerformance(api, prefs);
+  const cameraDirector = mountCameraDirector(api, navigation, prefs, notify);
+  function renderLook(look) {
+    $('lookNote').textContent = look.note;
+    document.querySelectorAll('[data-look]').forEach(button => {
+      const active = button.dataset.look === look.id;
+      button.classList.toggle('selected', active); button.setAttribute('aria-pressed', active);
+    });
+    document.documentElement.style.setProperty('--look-color', look.color);
+  }
   function chooseLook(id) {
     if (api.state().rendering) { notify('Wait for the video export to finish.'); return; }
     const look = LOOKS.find(item => item.id === id);
     if (!look) return;
-    lookId = id; api.applyLook(look, CONTROLLED_IDS, FEELS[feelId]); prefs.write('look', id);
-    $('lookNote').textContent = look.note;
-    document.querySelectorAll('[data-look]').forEach(button => {
-      const active = button.dataset.look === id;
-      button.classList.toggle('selected', active); button.setAttribute('aria-pressed', active);
-    });
-    document.documentElement.style.setProperty('--look-color', look.color);
+    lookId = id; api.applyLook(look, CONTROLLED_IDS, FEELS[feelId]); prefs.write('look', id); renderLook(look);
   }
   for (const [index, look] of LOOKS.entries()) {
     const button = document.createElement('button');
@@ -82,6 +88,7 @@ export async function mountSplatitude(api) {
   }
   async function chooseAsset(asset) {
     if (busy || api.state().rendering || api.state().loading) return;
+    cameraDirector.setAsset(null); liveControls.reset();
     busy = true; renderLibrary(); $('importSplat').disabled = true;
     $('sceneTitle').textContent = `Opening ${names[asset.id] || asset.name}…`;
     $('sceneInfo').textContent = `${fmtSize(asset.bytes)} · loading from your computer`;
@@ -93,6 +100,7 @@ export async function mountSplatitude(api) {
       navigation.setMode(asset.shareCoordinates && !document.body.classList.contains('advanced') ? 'walk' : 'orbit');
       document.body.classList.remove('library-open'); $('mobileLibrary').setAttribute('aria-expanded', 'false');
       if (views[asset.id]) api.setView(views[asset.id]);
+      cameraDirector.setAsset(asset);
       prefs.write('selected', asset.id);
       const url = new URL(location.href); url.searchParams.set('scene', asset.id); history.replaceState(null, '', url);
       $('sceneTitle').textContent = names[asset.id] || asset.name;
@@ -140,7 +148,7 @@ export async function mountSplatitude(api) {
   $('trackPlay').onclick = () => api.play();
   $('saveSession').onclick = () => api.savePreset();
   $('openSession').onclick = () => api.openPreset();
-  $('homeView').onclick = () => { if (selected) api.setView(views[selected.id] || homeView); else if (homeView) api.setView(homeView); };
+  $('homeView').onclick = () => { cameraDirector.stop(); if (selected) api.setView(views[selected.id] || homeView); else if (homeView) api.setView(homeView); };
   $('enterSpace').onclick = () => {
     navigation.setMode('walk'); if (homeView) api.setView(homeView);
     notify('Back inside. Drag to look; WASD or arrows to move.');
@@ -197,6 +205,9 @@ export async function mountSplatitude(api) {
   }
   function update() {
     const state = api.state();
+    liveControls.update(state);
+    const hud = [LOOKS.find(look => look.id === state.look)?.name, state.live ? 'LIVE' : state.hasAudio ? 'TRACK' : '', state.frozen ? 'FROZEN' : '', state.boosted ? 'BOOST' : '', cameraDirector.state().mode !== 'manual' ? cameraDirector.state().mode.toUpperCase() : ''].filter(Boolean).join(' · ');
+    if ($('performanceHud').textContent !== hud) $('performanceHud').textContent = hud;
     if (state.hasAudio && state.audioName !== lastFile) {
       lastFile = state.audioName;
       if (!state.playing) api.play();
@@ -219,11 +230,12 @@ export async function mountSplatitude(api) {
     $('sensitivityValue').textContent = Number($('liveSensitivity').value).toFixed(1) + '×';
     $('bypassEffects').classList.toggle('selected', state.bypass); $('bypassEffects').setAttribute('aria-pressed', state.bypass);
     if (state.look !== lookId && LOOKS.some(look => look.id === state.look)) {
-      lookId = state.look; document.querySelectorAll('[data-look]').forEach(item => item.classList.toggle('selected', item.dataset.look === lookId));
+      lookId = state.look; prefs.write('look', lookId); renderLook(LOOKS.find(look => look.id === lookId));
     }
+    if (state.mix !== lastState?.mix) prefs.write('mix', state.mix);
     if (lastState?.live && !state.live) notify('System audio disconnected.');
     if (state.asset && !state.loading && state.asset !== lastState?.asset && !busy && state.asset !== (names[selected?.id] || selected?.name)) {
-      selected = null; homeView = api.getView(); navigation.setMode('orbit'); $('enterSpace').textContent = '⌂ Reset view'; $('sceneTitle').textContent = state.asset;
+      selected = null; homeView = api.getView(); cameraDirector.setAsset(null); liveControls.reset(); navigation.setMode('orbit'); $('enterSpace').textContent = '⌂ Reset view'; $('sceneTitle').textContent = state.asset;
       $('sceneInfo').textContent = `${state.splats} splats · local file`; renderLibrary();
     }
     lastState = state; drawSpectrum(state);

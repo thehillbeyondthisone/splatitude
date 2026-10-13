@@ -11,7 +11,7 @@ const packages = process.env.SPLATITUDE_DEPENDENCIES || path.join(root, 'node_mo
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.json': 'application/json' };
-const staticFiles = new Set(['index.html', 'favicon.svg', 'src/engine.mjs', 'src/app.mjs', 'src/navigation.mjs', 'src/looks.mjs', 'src/live-audio.mjs', 'src/splatitude.css']);
+const staticFiles = new Set(['index.html', 'favicon.svg', 'src/engine.mjs', 'src/app.mjs', 'src/navigation.mjs', 'src/performance.mjs', 'src/camera-director.mjs', 'src/looks.mjs', 'src/live-audio.mjs', 'src/splatitude.css']);
 const vendors = [['/vendor/three/', path.join(packages, 'three')],
   ['/vendor/spark/', path.join(packages, '@sparkjsdev', 'spark')],
   ['/vendor/mp4-muxer/', path.join(packages, 'mp4-muxer')]];

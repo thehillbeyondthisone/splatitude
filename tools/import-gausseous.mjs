@@ -11,10 +11,12 @@ engine = engine.replaceAll('`gausseous-', '`splatitude-');
 engine = `import { mountSplatitude } from './app.mjs';\n` + engine;
 engine = engine.replace('const controls = new OrbitControls', 'let performanceNavigation = "orbit";\nconst controls = new OrbitControls');
 engine = engine.replace('controls.enabled = !gestureOn && !draggingGizmo && !pickOn;', 'controls.enabled = performanceNavigation !== "walk" && !gestureOn && !draggingGizmo && !pickOn;');
-engine = engine.replace('let liveAudio = null;', 'let liveAudio = null;\nlet performanceMix = 1, performanceBypass = false, performanceLook = "pulse", splatLoading = false;\nlet performanceIds = new Set();');
-engine = engine.replace('a.depth * (hi - lo)', 'a.depth * performanceMix * (hi - lo)');
-engine = engine.replace('    V[id] = v;', '    V[id] = performanceBypass && !NO_ANIM.has(id) && !id.startsWith("ob") && id !== "ease" ? Number(DEFAULT[id]) : v;');
-engine = engine.replace('U.time.value    = playhead * V.dur;', 'U.time.value    = liveAudio?.active ? (performance.now() / 1000 - liveAudio.startedAt) : playhead * V.dur;');
+engine = engine.replace('let liveAudio = null;', 'let liveAudio = null;\nlet performanceMix = 1, performanceBypass = false, performanceLook = "pulse", splatLoading = false;\nlet performanceBands = { low: 1, mid: 1, high: 1 }, performanceBoost = 1, performanceFrozen = null;\nlet performanceIds = new Set();');
+engine = engine.replace('a.depth * (hi - lo)', 'a.depth * performanceMix * performanceBoost * (performanceBands[a.band] ?? 1) * (hi - lo)');
+engine = engine.replace('    V[id] = v;', '    const visual = !NO_ANIM.has(id) && !id.startsWith("ob") && id !== "ease";\n    V[id] = performanceBypass && visual ? Number(DEFAULT[id]) : performanceFrozen && visual ? (performanceFrozen.values[id] ?? v) : v;');
+engine = engine.replace('U.time.value    = playhead * V.dur;', 'U.time.value    = performanceFrozen?.time ?? (liveAudio?.active ? (performance.now() / 1000 - liveAudio.startedAt) : playhead * V.dur);');
+engine = engine.replaceAll('postMat.uniforms.seed.value = grainFrame;', 'postMat.uniforms.seed.value = performanceFrozen?.grain ?? grainFrame;');
+engine = engine.replace('postMat.uniforms.seed.value = i % 4096;', 'postMat.uniforms.seed.value = performanceFrozen?.grain ?? (i % 4096);');
 // Room scans can include distant outliers. The performance looks should not
 // displace an interior by metres just because the bounding sphere is large.
 engine = engine.replace('U.dAmt.value    = V.dAmt * radius;', 'U.dAmt.value    = V.dAmt * (performanceIds.has("dAmt") ? Math.min(radius, 8) : radius);');
@@ -25,8 +27,10 @@ engine = engine.replace('    setStatus(`${label} — ${n} gaussians.`);', '    s
 engine = engine.replace('if (mesh) { scene.remove(mesh); mesh = null; }\n  }\n}', 'if (mesh) { scene.remove(mesh); mesh.dispose?.(); mesh = null; }\n    return false;\n  } finally { splatLoading = false; }\n}');
 engine = engine.replace('if (rendering) { setStatus("Wait for the video export to finish.", true); return; }', 'if (liveAudio?.active) return;\n  if (rendering) { setStatus("Wait for the video export to finish.", true); return; }');
 engine = engine.replace('    $("audBassNoise").click();', '    liveAudio.startedAt = performance.now() / 1000;\n    // Keep the selected performance look and its routes when connecting.');
-engine = engine.replace('    asset: assetLabel,', '    performance: { mix: performanceMix, bypass: performanceBypass, look: performanceLook },\n    asset: assetLabel,');
-engine = engine.replace('  applyPreset.migrationNotes = [];', '  if (Number.isFinite(o?.performance?.mix)) performanceMix = clampNum(o.performance.mix, 0, 2);\n  performanceBypass = o?.performance?.bypass === true;\n  if (typeof o?.performance?.look === "string") performanceLook = o.performance.look;\n  applyPreset.migrationNotes = [];');
+engine = engine.replace('    asset: assetLabel,', '    performance: { mix: performanceMix, bypass: performanceBypass, look: performanceLook, bands: { ...performanceBands }, view: { position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov } },\n    asset: assetLabel,');
+engine = engine.replace('function applyPreset(o) {', 'function applyPreset(o) {\n  dispatchEvent(new Event("splatitude-camera-input"));\n  const previousPerformanceView = { position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov };');
+engine = engine.replace('  reframe();\n\n  /* --- v5 -> v6 migration', '  reframe();\n  if (modeIn === "manual") setPerformanceView(validView(o.performance?.view) ? o.performance.view : previousPerformanceView);\n\n  /* --- v5 -> v6 migration');
+engine = engine.replace('  applyPreset.migrationNotes = [];', '  if (Number.isFinite(o?.performance?.mix)) performanceMix = clampNum(o.performance.mix, 0, 2);\n  performanceBypass = o?.performance?.bypass === true;\n  performanceFrozen = null; performanceBoost = 1;\n  for (const band of ["low", "mid", "high"]) performanceBands[band] = Number.isFinite(o?.performance?.bands?.[band]) ? clampNum(o.performance.bands[band], 0, 2) : 1;\n  if (typeof o?.performance?.look === "string") performanceLook = o.performance.look;\n  applyPreset.migrationNotes = [];');
 engine = engine.replace('  const code = e.code;\n\n  if (code === "Escape")', '  const code = e.code;\n  if (performanceNavigation === "walk" && /^(Key[WASDQER]|Arrow(Up|Down|Left|Right))$/.test(code)) return;\n  if (!document.body.classList.contains("advanced") && /^Digit[1-6]$/.test(code)) return;\n\n  if (code === "Escape")');
 const auto = 'if (new URLSearchParams(location.search).get("studio") === "1") {\n  loadSplat("/studio.ply", "Martial Arts Studio — SHARE 30");\n}';
 if (!engine.includes(auto)) throw new Error('Missing expected startup hook');

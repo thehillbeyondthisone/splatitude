@@ -13,3 +13,14 @@ export async function visibleFraction(page) {
     return visible / (canvas.width * canvas.height);
   }, png.toString('base64'));
 }
+
+export async function waitForRendered(page, minimum = 0.2) {
+  const deadline = Date.now() + 10000;
+  let fraction = 0;
+  while (Date.now() < deadline) {
+    fraction = await visibleFraction(page);
+    if (fraction > minimum) return fraction;
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`Scene did not become visible; coverage ${fraction}`);
+}
